@@ -3,8 +3,6 @@
 #include "font-imp.h"
 
 #include <ft2build.h>
-#include "hb.h"
-#include "hb-ft.h"
 
 #include FT_FREETYPE_H
 #include FT_ADVANCES_H
