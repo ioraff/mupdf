@@ -350,6 +350,22 @@ $(MUVIEW_X11_CURL_EXE) : $(MUVIEW_X11_CURL_OBJ) $(MUPDF_LIB) $(THIRD_LIB) $(CURL
 endif
 endif
 
+ifeq "$(HAVE_WAYLAND)" "yes"
+MUVIEW_WAYLAND_EXE := $(OUT)/mupdf-wl
+MUVIEW_WAYLAND_OBJ := $(addprefix $(OUT)/platform/x11/, wl_main.o pdfapp.o)
+$(MUVIEW_WAYLAND_OBJ) : $(FITZ_HDR) $(PDF_HDR)
+$(MUVIEW_WAYLAND_EXE) : $(MUVIEW_WAYLAND_OBJ) $(MUPDF_LIB) $(THIRD_LIB)
+	$(LINK_CMD) $(WAYLAND_LIBS)
+
+ifeq "$(HAVE_CURL)" "yes"
+MUVIEW_WAYLAND_CURL_EXE := $(OUT)/mupdf-wl-curl
+MUVIEW_WAYLAND_CURL_OBJ := $(addprefix $(OUT)/platform/x11/curl/, wl_main.o pdfapp.o curl_stream.o)
+$(MUVIEW_WAYLAND_CURL_OBJ) : $(FITZ_HDR) $(PDF_HDR)
+$(MUVIEW_WAYLAND_CURL_EXE) : $(MUVIEW_WAYLAND_CURL_OBJ) $(MUPDF_LIB) $(THIRD_LIB) $(CURL_LIB)
+	$(LINK_CMD) $(WAYLAND_LIBS) $(CURL_LIBS) $(SYS_CURL_DEPS)
+endif
+endif
+
 ifeq "$(HAVE_GLFW)" "yes"
 MUVIEW_GLFW_EXE := $(OUT)/mupdf-gl
 MUVIEW_GLFW_OBJ := $(addprefix $(OUT)/platform/gl/, gl-font.o gl-input.o gl-main.o)

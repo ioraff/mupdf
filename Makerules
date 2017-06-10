@@ -69,6 +69,7 @@ ifeq "$(OS)" "MINGW"
 
 WINDRES := windres
 HAVE_X11 ?= no
+HAVE_WAYLAND ?= no
 HAVE_WIN32 := yes
 CC=gcc
 # Add flags required for Harfbuzz because of missing strdup
@@ -78,6 +79,7 @@ CFLAGS+= -U__STRICT_ANSI__
 else ifeq "$(OS)" "MACOS"
 
 HAVE_X11 ?= no
+HAVE_WAYLAND ?= no
 
 HAVE_PTHREAD := yes
 SYS_PTHREAD_CFLAGS :=
@@ -138,6 +140,12 @@ ifeq "$(shell pkg-config --exists x11 xext && echo yes)" "yes"
 HAVE_X11 := yes
 SYS_X11_CFLAGS := $(shell pkg-config --cflags x11 xext)
 SYS_X11_LIBS := $(shell pkg-config --libs x11 xext)
+endif
+
+ifeq "$(shell pkg-config --exists wayland-client wayland-cursor pixman-1 xkbcommon && echo yes)" "yes"
+HAVE_WAYLAND := yes
+SYS_WAYLAND_CFLAGS := $(shell pkg-config --cflags wayland-client wayland-cursor pixman-1 xkbcommon)
+SYS_WAYLAND_LIBS := $(shell pkg-config --libs wayland-client wayland-cursor pixman-1 xkbcommon)
 endif
 
 ifeq "$(shell pkg-config --exists harfbuzz && echo yes)" "yes"
@@ -277,5 +285,6 @@ endif
 # TODO: If crosscompiling, why not just call "make libs" instead of this exception?
 ifeq "$(CROSSCOMPILE)" "yes"
 HAVE_X11 ?= no
+HAVE_WAYLAND ?= no
 HAVE_GLFW ?= no
 endif
