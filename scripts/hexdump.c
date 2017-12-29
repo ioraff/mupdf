@@ -5,22 +5,30 @@
 #include <string.h>
 #include <unistd.h>
 
+static int zero, string;
+
 static int
 hexdump(FILE *fo, FILE *fi)
 {
 	int c, n;
 
+	if (string)
+		fprintf(fo, "\"");
+
 	n = 0;
 	c = fgetc(fi);
 	while (c != -1)
 	{
-		n += fprintf(fo, "%d,", c);
+		n += fprintf(fo, string ? "\\x%02x" : "%d,", c);
 		if (n > 72) {
-			fprintf(fo, "\n");
+			fprintf(fo, string ? "\"\n\"" : "\n");
 			n = 0;
 		}
 		c = fgetc(fi);
 	}
+
+	if (string)
+		fprintf(fo, "\"\n");
 
 	return n;
 }
@@ -28,7 +36,7 @@ hexdump(FILE *fo, FILE *fi)
 static int
 usage(void)
 {
-	fprintf(stderr, "usage: hexdump [-p prefix] output.c input.dat\n");
+	fprintf(stderr, "usage: hexdump [-0] [-s] [-p prefix] output.c input.dat\n");
 	exit(1);
 }
 
@@ -46,10 +54,16 @@ main(int argc, char **argv)
 	if (argc < 3)
 		usage();
 
-	while ((c = getopt(argc, argv, "0p:")) != -1)
+	while ((c = getopt(argc, argv, "0sp:")) != -1)
 	{
 		switch (c)
 		{
+		case '0':
+			zero = 1;
+			break;
+		case 's':
+			string = 1;
+			break;
 		case 'p':
 			prefix = optarg;
 			break;
@@ -65,15 +79,7 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	fprintf(fo, "#ifndef __STRICT_ANSI__\n");
-	fprintf(fo, "#if defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__)\n");
-	fprintf(fo, "#if !defined(__ICC) && !defined(__ANDROID__)\n");
-	fprintf(fo, "#define HAVE_INCBIN\n");
-	fprintf(fo, "#endif\n");
-	fprintf(fo, "#endif\n");
-	fprintf(fo, "#endif\n");
-
-	for (i = optind + 1; i < argc; i++)
+	for (i = optind+1; i < argc; i++)
 	{
 		fi = fopen(argv[i], "rb");
 		if (!fi)
@@ -115,22 +121,19 @@ main(int argc, char **argv)
 		size = ftell(fi);
 		fseek(fi, 0, SEEK_SET);
 
-		fprintf(fo, "\n#ifdef HAVE_INCBIN\n");
-		fprintf(fo, "const int fz_%s_size = %d;\n", filename, size);
-		fprintf(fo, "extern const char fz_%s[];\n", filename);
-		fprintf(fo, "asm(\".section .rodata\");\n");
-		fprintf(fo, "asm(\".global fz_%s\");\n", filename);
-		fprintf(fo, "asm(\".type fz_%s STT_OBJECT\");\n", filename);
-		fprintf(fo, "asm(\".size fz_%s, %d\");\n", filename, size);
-		fprintf(fo, "asm(\".balign 64\");\n");
-		fprintf(fo, "asm(\"fz_%s:\");\n", filename);
-		fprintf(fo, "asm(\".incbin \\\"%s\\\"\");\n", argv[i]);
-		fprintf(fo, "#else\n");
-		fprintf(fo, "const int fz_%s_size = %d;\n", filename, size);
-		fprintf(fo, "const char fz_%s[] = {\n", filename);
+		fprintf(fo, "const int fz_%s_size = %d;\n", filename, size + zero);
+		fprintf(fo, "const unsigned char fz_%s[] =", filename);
+		fprintf(fo, string ? "\n" : " {\n");
 		hexdump(fo, fi);
-		fprintf(fo, "0};\n"); /* zero-terminate so we can hexdump text files into C strings */
-		fprintf(fo, "#endif\n");
+		if (!zero)
+		{
+			fprintf(fo, string ? ";\n" : "};\n");
+		}
+		else
+		{
+			/* zero-terminate so we can hexdump text files into C strings */
+			fprintf(fo, string ? ";\n" : "0};\n");
+		}
 
 		fclose(fi);
 	}

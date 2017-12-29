@@ -9,10 +9,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/select.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #define BTN_LEFT 0x110
 #define BTN_RIGHT 0x111
@@ -160,7 +162,7 @@ static void output_done(void *data, struct wl_output *wlout)
 {
 	struct screen *screen = data;
 
-	screen->resolution = screen->width * 25.4 / screen->width_mm + 0.5;
+	screen->resolution = screen->width * 25.4f / screen->width_mm + 0.5f;
 }
 
 static void output_scale(void *data, struct wl_output *wlout, int32_t factor)
@@ -569,7 +571,7 @@ static struct image *createimage(int w, int h)
 	img->pixman = pixman_image_create_bits_no_clear(PIXMAN_x8r8g8b8, w, h, data, p);
 	if (!img->pixman)
 		goto err5;
-	img->pixmap = fz_new_pixmap_with_data(gapp.ctx, fz_device_rgb(gapp.ctx), w, h, 1, p, data);
+	img->pixmap = fz_new_pixmap_with_data(gapp.ctx, fz_device_rgb(gapp.ctx), w, h, NULL, 1, p, data);
 	close(fd);
 
 	return img;
@@ -1163,7 +1165,8 @@ void windrawstring(pdfapp_t *app, int x, int y, char *s)
 
 		fz_scale(&mat, 12, -12);
 		fz_show_string(app->ctx, text, font, &mat, s, 0, 0, 0, 0);
-		fz_fill_text(app->ctx, dev, text, &fz_identity, fz_device_rgb(app->ctx), color, 1);
+		fz_fill_text(app->ctx, dev, text, &fz_identity, fz_device_rgb(app->ctx), color, 1, NULL);
+		fz_close_device(app->ctx, dev);
 	}
 	fz_always(app->ctx)
 	{

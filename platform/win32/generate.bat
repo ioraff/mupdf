@@ -22,7 +22,7 @@ if not exist generated/pdf-cmap-extra.c cmapdump.exe generated/pdf-cmap-extra.c 
 if not exist generated/pdf-cmap-utf8.c cmapdump.exe generated/pdf-cmap-utf8.c resources\cmaps\utf8\*
 if not exist generated/pdf-cmap-utf32.c cmapdump.exe generated/pdf-cmap-utf32.c resources\cmaps\utf32\*
 
-if not exist generated/pdf-js-util.c hexdump.exe generated/pdf-js-util.c source/pdf/pdf-js-util.js
+if not exist generated/pdf-js-util.c hexdump.exe -0 generated/pdf-js-util.c source/pdf/pdf-js-util.js
 
 if not exist generated/DroidSansFallback.c hexdump.exe generated/DroidSansFallback.c resources/fonts/droid/DroidSansFallback.ttf
 if not exist generated/DroidSansFallbackFull.c hexdump.exe generated/DroidSansFallbackFull.c resources/fonts/droid/DroidSansFallbackFull.ttf
@@ -156,6 +156,8 @@ if not exist generated/NotoSerifMalayalam-Regular.c hexdump.exe generated/NotoSe
 if not exist generated/NotoSerifTamil-Regular.c hexdump.exe generated/NotoSerifTamil-Regular.c resources/fonts/noto/NotoSerifTamil-Regular.ttf
 if not exist generated/NotoSerifTelugu-Regular.c hexdump.exe generated/NotoSerifTelugu-Regular.c resources/fonts/noto/NotoSerifTelugu-Regular.ttf
 if not exist generated/NotoSerifThai-Regular.c hexdump.exe generated/NotoSerifThai-Regular.c resources/fonts/noto/NotoSerifThai-Regular.ttf
+
+if not exist generated/icc-profiles.c hexdump.exe generated/icc-profiles.c resources/icc/gray.icc resources/icc/rgb.icc resources/icc/cmyk.icc resources/icc/lab.icc
 
 del namedump.obj cmapdump.obj hexdump.obj
 del namedump.exe cmapdump.exe hexdump.exe

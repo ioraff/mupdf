@@ -1,4 +1,8 @@
+#include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
+#include "../fitz/fitz-imp.h"
+
+#include <string.h>
 
 #ifdef HAVE_LIBCRYPTO
 
@@ -300,7 +304,7 @@ static int pk7_verify(X509_STORE *cert_store, PKCS7 *p7, BIO *detached, char *eb
 			else
 			{
 				/* Error while checking the certificate chain */
-				snprintf(ebuf, ebufsize, "%s(%d): %s", X509_verify_cert_error_string(vctx.err), vctx.err, vctx.certdesc);
+				fz_snprintf(ebuf, ebufsize, "%s(%d): %s", X509_verify_cert_error_string(vctx.err), vctx.err, vctx.certdesc);
 			}
 
 			res = 0;
@@ -686,11 +690,11 @@ void pdf_write_digest(fz_context *ctx, pdf_document *doc, const char *filename, 
 		if (p7_len*2 + 2 > digest_length)
 			fz_throw(ctx, FZ_ERROR_GENERIC, "Insufficient space for digest");
 
-		f = fz_fopen(filename, "rb+");
+		f = fopen(filename, "rb+");
 		if (f == NULL)
 			fz_throw(ctx, FZ_ERROR_GENERIC, "Failed to write digest");
 
-		fz_fseek(f, digest_offset+1, SEEK_SET);
+		fseek(f, digest_offset+1, SEEK_SET);
 
 		for (i = 0; i < p7_len; i++)
 			fprintf(f, "%02x", p7_ptr[i]);
