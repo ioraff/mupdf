@@ -3,7 +3,7 @@
 #include <pixman.h>
 #include <wayland-client.h>
 #include <wayland-cursor.h>
-#include <xdg-shell-unstable-v5-client-protocol.h>
+#include <xdg-shell-client-protocol.h>
 #include <xkbcommon/xkbcommon.h>
 
 #include <fcntl.h>
@@ -67,6 +67,7 @@ struct screen {
 struct window {
 	struct wl_surface *surface;
 	struct xdg_surface *xdgsurface;
+	struct xdg_toplevel *toplevel;
 	struct wl_callback *frame;
 	int width, height;
 	struct image *image;
@@ -87,7 +88,7 @@ static struct wl_keyboard *keyboard;
 static struct wl_pointer *pointer;
 static struct wl_data_device_manager *datadevicemanager;
 static struct wl_data_device *datadevice;
-static struct xdg_shell *shell;
+static struct xdg_wm_base *wm;
 static struct screen *firstscreen;
 static struct {
 	struct xkb_context *ctx;
@@ -205,8 +206,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name, 
 				free(screen);
 		}
 	}
-	else if (strcmp(interface, "xdg_shell") == 0)
-		shell = wl_registry_bind(reg, name, &xdg_shell_interface, MIN(version, 1));
+	else if (strcmp(interface, "xdg_wm_base") == 0)
+		wm = wl_registry_bind(reg, name, &xdg_wm_base_interface, MIN(version, 1));
 }
 
 static void registry_global_remove(void *data, struct wl_registry *reg, uint32_t name)
@@ -501,7 +502,18 @@ static struct wl_callback_listener frame_listener = {
 	.done = frame_done,
 };
 
-static void xdgsurface_configure(void *data, struct xdg_surface *xdgsurface, int32_t w, int32_t h, struct wl_array *states, uint32_t serial)
+static void xdgsurface_configure(void *data, struct xdg_surface *xdgsurface, uint32_t serial)
+{
+	struct window *win = data;
+
+	xdg_surface_ack_configure(win->xdgsurface, serial);
+}
+
+static const struct xdg_surface_listener xdgsurface_listener = {
+	.configure = xdgsurface_configure,
+};
+
+static void toplevel_configure(void *data, struct xdg_toplevel *toplevel, int32_t w, int32_t h, struct wl_array *states)
 {
 	struct window *win = data;
 	uint32_t *state;
@@ -513,24 +525,23 @@ static void xdgsurface_configure(void *data, struct xdg_surface *xdgsurface, int
 	win->maximized = 0;
 	wl_array_for_each (state, states)
 	{
-		if (*state == XDG_SURFACE_STATE_MAXIMIZED || *state == XDG_SURFACE_STATE_FULLSCREEN)
+		if (*state == XDG_TOPLEVEL_STATE_MAXIMIZED || *state == XDG_TOPLEVEL_STATE_FULLSCREEN)
 		{
 			win->maximized = 1;
 			break;
 		}
 	}
-	xdg_surface_ack_configure(win->xdgsurface, serial);
 }
 
 static void
-xdgsurface_close(void *data, struct xdg_surface *xdgsurface)
+toplevel_close(void *data, struct xdg_toplevel *toplevel)
 {
 	closing = 1;
 }
 
-static const struct xdg_surface_listener xdgsurface_listener = {
-	.configure = xdgsurface_configure,
-	.close = xdgsurface_close,
+static const struct xdg_toplevel_listener toplevel_listener = {
+	.configure = toplevel_configure,
+	.close = toplevel_close,
 };
 
 /*
@@ -734,14 +745,13 @@ static void wininit(void)
 		fz_throw(gapp.ctx, FZ_ERROR_GENERIC, "display has no wl_shm");
 	if (!seat)
 		fz_throw(gapp.ctx, FZ_ERROR_GENERIC, "display has no wl_seat");
-	if (!shell)
-		fz_throw(gapp.ctx, FZ_ERROR_GENERIC, "display has no xdg_shell");
+	if (!wm)
+		fz_throw(gapp.ctx, FZ_ERROR_GENERIC, "display has no xdg_wm_base");
 	if (!firstscreen)
 		fz_throw(gapp.ctx, FZ_ERROR_GENERIC, "display has no wl_output");
 	if (datadevicemanager)
 		datadevice = wl_data_device_manager_get_data_device(datadevicemanager, seat);
 	wl_seat_add_listener(seat, &seat_listener, NULL);
-	xdg_shell_use_unstable_version(shell, XDG_SHELL_VERSION_CURRENT);
 
 	xkb.ctx = xkb_context_new(0);
 	if (!xkb.ctx)
@@ -773,10 +783,14 @@ static void winopen(void)
 	if (!gwin.surface)
 		fz_throw(gapp.ctx, FZ_ERROR_MEMORY, "cannot create window surface");
 	wl_surface_add_listener(gwin.surface, &surface_listener, &gwin);
-	gwin.xdgsurface = xdg_shell_get_xdg_surface(shell, gwin.surface);
+	gwin.xdgsurface = xdg_wm_base_get_xdg_surface(wm, gwin.surface);
 	if (!gwin.xdgsurface)
 		fz_throw(gapp.ctx, FZ_ERROR_MEMORY, "cannot create window shell surface");
 	xdg_surface_add_listener(gwin.xdgsurface, &xdgsurface_listener, &gwin);
+	gwin.toplevel = xdg_surface_get_toplevel(gwin.xdgsurface);
+	if (!gwin.toplevel)
+		fz_throw(gapp.ctx, FZ_ERROR_MEMORY, "cannot create window toplevel surface");
+	xdg_toplevel_add_listener(gwin.toplevel, &toplevel_listener, &gwin);
 
 	/* check for initial configure */
 	wl_display_roundtrip(display);
@@ -842,8 +856,9 @@ void cleanup(pdfapp_t *app)
 
 	pdfapp_close(app);
 
-	wl_surface_destroy(gwin.surface);
+	xdg_toplevel_destroy(gwin.toplevel);
 	xdg_surface_destroy(gwin.xdgsurface);
+	wl_surface_destroy(gwin.surface);
 	if (gwin.frame)
 		wl_callback_destroy(gwin.frame);
 	destroyimage(gwin.image);
@@ -855,7 +870,7 @@ void cleanup(pdfapp_t *app)
 	xkb_context_unref(xkb.ctx);
 	wl_surface_destroy(cursor.surface);
 	wl_cursor_theme_destroy(cursor.theme);
-	xdg_shell_destroy(shell);
+	xdg_wm_base_destroy(wm);
 	wl_shm_destroy(shm);
 	if (keyboard)
 		wl_keyboard_release(keyboard);
@@ -932,7 +947,7 @@ void wintitle(pdfapp_t *app, char *s)
 {
 	struct window *win = app->userdata;
 
-	xdg_surface_set_title(win->xdgsurface, s);
+	xdg_toplevel_set_title(win->toplevel, s);
 }
 
 void winhelp(pdfapp_t *app)
@@ -955,7 +970,7 @@ void winfullscreen(pdfapp_t *app, int state)
 {
 	struct window *win = app->userdata;
 
-	xdg_surface_set_fullscreen(win->xdgsurface, NULL);
+	xdg_toplevel_set_fullscreen(win->toplevel, NULL);
 }
 
 static void pushbox(pixman_box32_t *boxes, int *n, int x0, int y0, int x1, int y1)
