@@ -4,7 +4,6 @@
 typedef struct pdf_lexbuf_s pdf_lexbuf;
 typedef struct pdf_lexbuf_large_s pdf_lexbuf_large;
 typedef struct pdf_xref_s pdf_xref;
-typedef struct pdf_crypt_s pdf_crypt;
 typedef struct pdf_ocg_descriptor_s pdf_ocg_descriptor;
 typedef struct pdf_portfolio_s pdf_portfolio;
 
@@ -515,28 +514,63 @@ int pdf_add_portfolio_entry(fz_context *ctx, pdf_document *doc,
 void pdf_set_portfolio_entry_info(fz_context *ctx, pdf_document *doc, int entry, int schema_entry, pdf_obj *data);
 
 /*
-	pdf_update_page: update a page for the sake of changes caused by a call
-	to pdf_pass_event. pdf_update_page regenerates any appearance streams that
-	are out of date, checks for cases where different appearance streams
-	should be selected because of state changes, and records internally
-	each annotation that has changed appearance. The list of changed annotations
-	is then available via querying the annot->changed flag. Note that a call to
-	pdf_pass_event for one page may lead to changes on any other, so an app
-	should call pdf_update_page for every page it currently displays. Also
-	it is important that the pdf_page object is the one used to last render
-	the page. If instead the app were to drop the page and reload it then
-	a call to pdf_update_page would not reliably be able to report all changed
-	areas.
-*/
-void pdf_update_page(fz_context *ctx, pdf_page *page);
-
-/*
 	Determine whether changes have been made since the
 	document was opened or last saved.
 */
 int pdf_has_unsaved_changes(fz_context *ctx, pdf_document *doc);
 
-typedef struct pdf_signer_s pdf_signer;
+enum pdf_signature_error
+{
+	PDF_SIGNATURE_ERROR_OKAY,
+	PDF_SIGNATURE_ERROR_NO_SIGNATURES,
+	PDF_SIGNATURE_ERROR_NO_CERTIFICATE,
+	PDF_SIGNATURE_ERROR_DOCUMENT_CHANGED,
+	PDF_SIGNATURE_ERROR_SELF_SIGNED,
+	PDF_SIGNATURE_ERROR_SELF_SIGNED_IN_CHAIN,
+	PDF_SIGNATURE_ERROR_NOT_TRUSTED,
+	PDF_SIGNATURE_ERROR_UNKNOWN
+};
+
+typedef struct pdf_pkcs7_designated_name_s
+{
+	char *cn;
+	char *o;
+	char *ou;
+	char *email;
+	char *c;
+}
+pdf_pkcs7_designated_name;
+
+/* Object that can perform the cryptographic operation necessary for document signing */
+typedef struct pdf_pkcs7_signer_s pdf_pkcs7_signer;
+
+/* Increment the reference count for a signer object */
+typedef pdf_pkcs7_signer *(pdf_pkcs7_keep_fn)(pdf_pkcs7_signer *signer);
+
+/* Drop a reference for a signer object */
+typedef void (pdf_pkcs7_drop_fn)(pdf_pkcs7_signer *signer);
+
+/* Obtain the designated name information from a signer object */
+typedef pdf_pkcs7_designated_name *(pdf_pkcs7_designated_name_fn)(pdf_pkcs7_signer *signer);
+
+/* Free the resources associated with previously obtained designated name information */
+typedef void (pdf_pkcs7_drop_designated_name_fn)(pdf_pkcs7_signer *signer, pdf_pkcs7_designated_name *name);
+
+/* Predict the size of the digest. The actual digest returned by create_digest will be no greater in size */
+typedef int (pdf_pkcs7_max_digest_size_fn)(pdf_pkcs7_signer *signer);
+
+/* Create a signature based on ranges of bytes drawn from a stream */
+typedef int (pdf_pkcs7_create_digest_fn)(pdf_pkcs7_signer *signer, fz_stream *in, unsigned char *digest, int *digest_len);
+
+struct pdf_pkcs7_signer_s
+{
+	pdf_pkcs7_keep_fn *keep;
+	pdf_pkcs7_drop_fn *drop;
+	pdf_pkcs7_designated_name_fn *designated_name;
+	pdf_pkcs7_drop_designated_name_fn *drop_designated_name;
+	pdf_pkcs7_max_digest_size_fn *max_digest_size;
+	pdf_pkcs7_create_digest_fn *create_digest;
+};
 
 /* Unsaved signature fields */
 typedef struct pdf_unsaved_sig_s pdf_unsaved_sig;
@@ -548,7 +582,7 @@ struct pdf_unsaved_sig_s
 	int byte_range_end;
 	int contents_start;
 	int contents_end;
-	pdf_signer *signer;
+	pdf_pkcs7_signer *signer;
 	pdf_unsaved_sig *next;
 };
 
@@ -585,6 +619,7 @@ struct pdf_document_s
 	int *xref_index;
 	int freeze_updates;
 	int has_xref_streams;
+	int has_old_style_xrefs;
 
 	int rev_page_count;
 	pdf_rev_page_map *rev_page_map;
@@ -648,8 +683,6 @@ struct pdf_document_s
 
 	int recalculating;
 	int dirty;
-
-	void (*update_appearance)(fz_context *ctx, pdf_document *doc, pdf_annot *annot);
 
 	pdf_doc_event_cb *event_cb;
 	void *event_cb_data;
@@ -748,7 +781,7 @@ pdf_obj *pdf_graft_mapped_object(fz_context *ctx, pdf_graft_map *map, pdf_obj *o
 	pcontents: Pointer to a place to put the created
 	contents buffer.
 */
-fz_device *pdf_page_write(fz_context *ctx, pdf_document *doc, const fz_rect *mediabox, pdf_obj **presources, fz_buffer **pcontents);
+fz_device *pdf_page_write(fz_context *ctx, pdf_document *doc, fz_rect mediabox, pdf_obj **presources, fz_buffer **pcontents);
 
 /*
 	pdf_add_page: Create a pdf_obj within a document that
@@ -774,7 +807,7 @@ fz_device *pdf_page_write(fz_context *ctx, pdf_document *doc, const fz_rect *med
 	contents: The page contents for the new page (typically
 	create by pdf_page_write).
 */
-pdf_obj *pdf_add_page(fz_context *ctx, pdf_document *doc, const fz_rect *mediabox, int rotate, pdf_obj *resources, fz_buffer *contents);
+pdf_obj *pdf_add_page(fz_context *ctx, pdf_document *doc, fz_rect mediabox, int rotate, pdf_obj *resources, fz_buffer *contents);
 
 /*
 	pdf_insert_page: Insert a page previously created by
@@ -844,7 +877,8 @@ struct pdf_write_options_s
 	int do_decompress; /* Decompress streams (except when compressing images/fonts). */
 	int do_garbage; /* Garbage collect objects before saving; 1=gc, 2=re-number, 3=de-duplicate. */
 	int do_linear; /* Write linearised. */
-	int do_clean; /* Sanitize content streams. */
+	int do_clean; /* Clean content streams. */
+	int do_sanitize; /* Sanitize content streams. */
 	int continue_on_error; /* If set, errors are (optionally) counted and writing continues. */
 	int *errors; /* Pointer to a place to store a count of errors */
 };
@@ -857,6 +891,7 @@ struct pdf_write_options_s
 		l: linearize
 		a: ascii hex encode
 		z: deflate
+		c: clean content streams
 		s: sanitize content streams
 */
 pdf_write_options *pdf_parse_write_options(fz_context *ctx, pdf_write_options *opts, const char *args);
@@ -869,8 +904,6 @@ int pdf_has_unsaved_sigs(fz_context *ctx, pdf_document *doc);
 
 /*
 	pdf_write_document: Write out the document to an output stream with all changes finalised.
-
-	This method will throw an error if pdf_has_unsaved_sigs.
 */
 void pdf_write_document(fz_context *ctx, pdf_document *doc, fz_output *out, pdf_write_options *opts);
 

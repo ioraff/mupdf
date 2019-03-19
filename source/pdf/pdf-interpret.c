@@ -64,13 +64,13 @@ pdf_clear_stack(fz_context *ctx, pdf_csi *csi)
 }
 
 static pdf_font_desc *
-load_font_or_hail_mary(fz_context *ctx, pdf_document *doc, pdf_obj *rdb, pdf_obj *font, int depth, fz_cookie *cookie)
+load_font_or_hail_mary(fz_context *ctx, pdf_document *doc, pdf_obj *rdb, pdf_obj *font, fz_cookie *cookie)
 {
 	pdf_font_desc *desc;
 
 	fz_try(ctx)
 	{
-		desc = pdf_load_font(ctx, doc, rdb, font, depth);
+		desc = pdf_load_font(ctx, doc, rdb, font);
 	}
 	fz_catch(ctx)
 	{
@@ -155,23 +155,23 @@ pdf_process_extgstate(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, pdf_ob
 {
 	pdf_obj *obj;
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_LW);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(LW));
 	if (pdf_is_number(ctx, obj) && proc->op_w)
 		proc->op_w(ctx, proc, pdf_to_real(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_LC);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(LC));
 	if (pdf_is_int(ctx, obj) && proc->op_J)
 		proc->op_J(ctx, proc, fz_clampi(pdf_to_int(ctx, obj), 0, 2));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_LJ);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(LJ));
 	if (pdf_is_int(ctx, obj) && proc->op_j)
 		proc->op_j(ctx, proc, fz_clampi(pdf_to_int(ctx, obj), 0, 2));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_ML);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(ML));
 	if (pdf_is_number(ctx, obj) && proc->op_M)
 		proc->op_M(ctx, proc, pdf_to_real(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_D);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(D));
 	if (pdf_is_array(ctx, obj) && proc->op_d)
 	{
 		pdf_obj *dash_array = pdf_array_get(ctx, obj, 0);
@@ -179,20 +179,20 @@ pdf_process_extgstate(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, pdf_ob
 		proc->op_d(ctx, proc, dash_array, pdf_to_real(ctx, dash_phase));
 	}
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_RI);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(RI));
 	if (pdf_is_name(ctx, obj) && proc->op_ri)
 		proc->op_ri(ctx, proc, pdf_to_name(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_FL);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(FL));
 	if (pdf_is_number(ctx, obj) && proc->op_i)
 		proc->op_i(ctx, proc, pdf_to_real(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_Font);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(Font));
 	if (pdf_is_array(ctx, obj) && proc->op_Tf)
 	{
 		pdf_obj *font_ref = pdf_array_get(ctx, obj, 0);
 		pdf_obj *font_size = pdf_array_get(ctx, obj, 1);
-		pdf_font_desc *font = load_font_or_hail_mary(ctx, csi->doc, csi->rdb, font_ref, 0, csi->cookie);
+		pdf_font_desc *font = load_font_or_hail_mary(ctx, csi->doc, csi->rdb, font_ref, csi->cookie);
 		fz_try(ctx)
 			proc->op_Tf(ctx, proc, "ExtGState", font, pdf_to_real(ctx, font_size));
 		fz_always(ctx)
@@ -203,116 +203,99 @@ pdf_process_extgstate(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, pdf_ob
 
 	/* overprint and color management */
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_OP);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(OP));
 	if (pdf_is_bool(ctx, obj) && proc->op_gs_OP)
 		proc->op_gs_OP(ctx, proc, pdf_to_bool(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_op);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(op));
 	if (pdf_is_bool(ctx, obj) && proc->op_gs_op)
 		proc->op_gs_op(ctx, proc, pdf_to_bool(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_OPM);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(OPM));
 	if (pdf_is_int(ctx, obj) && proc->op_gs_OPM)
 		proc->op_gs_OPM(ctx, proc, pdf_to_int(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_UseBlackPtComp);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(UseBlackPtComp));
 	if (pdf_is_name(ctx, obj) && proc->op_gs_UseBlackPtComp)
 		proc->op_gs_UseBlackPtComp(ctx, proc, obj);
 
 	/* transfer functions */
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_TR2);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(TR2));
 	if (pdf_is_name(ctx, obj))
-		if (!pdf_name_eq(ctx, obj, PDF_NAME_Identity) && !pdf_name_eq(ctx, obj, PDF_NAME_Default))
+		if (!pdf_name_eq(ctx, obj, PDF_NAME(Identity)) && !pdf_name_eq(ctx, obj, PDF_NAME(Default)))
 			fz_warn(ctx, "ignoring transfer function");
 	if (!obj) /* TR is ignored in the presence of TR2 */
 	{
-		pdf_obj *tr = pdf_dict_get(ctx, dict, PDF_NAME_TR);
+		pdf_obj *tr = pdf_dict_get(ctx, dict, PDF_NAME(TR));
 		if (pdf_is_name(ctx, tr))
-			if (!pdf_name_eq(ctx, tr, PDF_NAME_Identity))
+			if (!pdf_name_eq(ctx, tr, PDF_NAME(Identity)))
 				fz_warn(ctx, "ignoring transfer function");
 	}
 
 	/* transparency state */
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_CA);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(CA));
 	if (pdf_is_number(ctx, obj) && proc->op_gs_CA)
 		proc->op_gs_CA(ctx, proc, pdf_to_real(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_ca);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(ca));
 	if (pdf_is_number(ctx, obj) && proc->op_gs_ca)
 		proc->op_gs_ca(ctx, proc, pdf_to_real(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_BM);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(BM));
 	if (pdf_is_array(ctx, obj))
 		obj = pdf_array_get(ctx, obj, 0);
 	if (pdf_is_name(ctx, obj) && proc->op_gs_BM)
 		proc->op_gs_BM(ctx, proc, pdf_to_name(ctx, obj));
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_SMask);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(SMask));
 	if (proc->op_gs_SMask)
 	{
 		if (pdf_is_dict(ctx, obj))
 		{
-			pdf_xobject *xobj;
-			pdf_obj *group, *s, *bc, *tr;
+			pdf_obj *xobj, *s, *bc, *tr;
 			float softmask_bc[FZ_MAX_COLORS];
 			fz_colorspace *colorspace;
 			int colorspace_n = 1;
 			int k, luminosity;
 
-			fz_var(xobj);
+			xobj = pdf_dict_get(ctx, obj, PDF_NAME(G));
 
-			group = pdf_dict_get(ctx, obj, PDF_NAME_G);
-			if (!group)
-				fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot load softmask xobject (%d 0 R)", pdf_to_num(ctx, obj));
-			xobj = pdf_load_xobject(ctx, csi->doc, group);
+			colorspace = pdf_xobject_colorspace(ctx, xobj);
+			if (colorspace)
+				colorspace_n = fz_colorspace_n(ctx, colorspace);
 
-			fz_try(ctx)
+			/* Default background color is black. */
+			for (k = 0; k < colorspace_n; k++)
+				softmask_bc[k] = 0;
+			/* Which in CMYK means not all zeros! This should really be
+			 * a test for subtractive color spaces, but this will have
+			 * to do for now. */
+			if (fz_colorspace_is_cmyk(ctx, colorspace))
+				softmask_bc[3] = 1.0f;
+			fz_drop_colorspace(ctx, colorspace);
+
+			bc = pdf_dict_get(ctx, obj, PDF_NAME(BC));
+			if (pdf_is_array(ctx, bc))
 			{
-				colorspace = pdf_xobject_colorspace(ctx, xobj);
-				if (colorspace)
-					colorspace_n = fz_colorspace_n(ctx, colorspace);
-
-				/* Default background color is black. */
 				for (k = 0; k < colorspace_n; k++)
-					softmask_bc[k] = 0;
-				/* Which in CMYK means not all zeros! This should really be
-				 * a test for subtractive color spaces, but this will have
-				 * to do for now. */
-				if (colorspace == fz_device_cmyk(ctx))
-					softmask_bc[3] = 1.0f;
-				fz_drop_colorspace(ctx, colorspace);
-
-				bc = pdf_dict_get(ctx, obj, PDF_NAME_BC);
-				if (pdf_is_array(ctx, bc))
-				{
-					for (k = 0; k < colorspace_n; k++)
-						softmask_bc[k] = pdf_to_real(ctx, pdf_array_get(ctx, bc, k));
-				}
-
-				s = pdf_dict_get(ctx, obj, PDF_NAME_S);
-				if (pdf_name_eq(ctx, s, PDF_NAME_Luminosity))
-					luminosity = 1;
-				else
-					luminosity = 0;
-
-				tr = pdf_dict_get(ctx, obj, PDF_NAME_TR);
-				if (tr && !pdf_name_eq(ctx, tr, PDF_NAME_Identity))
-					fz_warn(ctx, "ignoring transfer function");
-
-				proc->op_gs_SMask(ctx, proc, xobj, csi->rdb, softmask_bc, luminosity);
+					softmask_bc[k] = pdf_array_get_real(ctx, bc, k);
 			}
-			fz_always(ctx)
-			{
-				pdf_drop_xobject(ctx, xobj);
-			}
-			fz_catch(ctx)
-			{
-				fz_rethrow(ctx);
-			}
+
+			s = pdf_dict_get(ctx, obj, PDF_NAME(S));
+			if (pdf_name_eq(ctx, s, PDF_NAME(Luminosity)))
+				luminosity = 1;
+			else
+				luminosity = 0;
+
+			tr = pdf_dict_get(ctx, obj, PDF_NAME(TR));
+			if (tr && !pdf_name_eq(ctx, tr, PDF_NAME(Identity)))
+				fz_warn(ctx, "ignoring transfer function");
+
+			proc->op_gs_SMask(ctx, proc, xobj, csi->rdb, softmask_bc, luminosity);
 		}
-		else if (pdf_is_name(ctx, obj) && pdf_name_eq(ctx, obj, PDF_NAME_None))
+		else if (pdf_is_name(ctx, obj) && pdf_name_eq(ctx, obj, PDF_NAME(None)))
 		{
 			proc->op_gs_SMask(ctx, proc, NULL, NULL, NULL, 0);
 		}
@@ -324,41 +307,32 @@ pdf_process_Do(fz_context *ctx, pdf_processor *proc, pdf_csi *csi)
 {
 	pdf_obj *xres, *xobj, *subtype;
 
-	xres = pdf_dict_get(ctx, csi->rdb, PDF_NAME_XObject);
+	xres = pdf_dict_get(ctx, csi->rdb, PDF_NAME(XObject));
 	if (!xres)
 		fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find XObject dictionary");
 	xobj = pdf_dict_gets(ctx, xres, csi->name);
 	if (!xobj)
 		fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find XObject resource '%s'", csi->name);
-	subtype = pdf_dict_get(ctx, xobj, PDF_NAME_Subtype);
-	if (pdf_name_eq(ctx, subtype, PDF_NAME_Form))
+	subtype = pdf_dict_get(ctx, xobj, PDF_NAME(Subtype));
+	if (pdf_name_eq(ctx, subtype, PDF_NAME(Form)))
 	{
-		pdf_obj *st = pdf_dict_get(ctx, xobj, PDF_NAME_Subtype2);
+		pdf_obj *st = pdf_dict_get(ctx, xobj, PDF_NAME(Subtype2));
 		if (st)
 			subtype = st;
 	}
 	if (!pdf_is_name(ctx, subtype))
 		fz_throw(ctx, FZ_ERROR_SYNTAX, "no XObject subtype specified");
 
-	if (pdf_is_hidden_ocg(ctx, csi->doc->ocg, csi->rdb, proc->usage, pdf_dict_get(ctx, xobj, PDF_NAME_OC)))
+	if (pdf_is_hidden_ocg(ctx, csi->doc->ocg, csi->rdb, proc->usage, pdf_dict_get(ctx, xobj, PDF_NAME(OC))))
 		return;
 
-	if (pdf_name_eq(ctx, subtype, PDF_NAME_Form))
+	if (pdf_name_eq(ctx, subtype, PDF_NAME(Form)))
 	{
 		if (proc->op_Do_form)
-		{
-			pdf_xobject *form = pdf_load_xobject(ctx, csi->doc, xobj);
-
-			fz_try(ctx)
-				proc->op_Do_form(ctx, proc, csi->name, form, csi->rdb);
-			fz_always(ctx)
-				pdf_drop_xobject(ctx, form);
-			fz_catch(ctx)
-				fz_rethrow(ctx);
-		}
+			proc->op_Do_form(ctx, proc, csi->name, xobj, csi->rdb);
 	}
 
-	else if (pdf_name_eq(ctx, subtype, PDF_NAME_Image))
+	else if (pdf_name_eq(ctx, subtype, PDF_NAME(Image)))
 	{
 		if (proc->op_Do_image)
 		{
@@ -404,7 +378,7 @@ pdf_process_CS(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, int stroke)
 		else
 		{
 			pdf_obj *csres, *csobj;
-			csres = pdf_dict_get(ctx, csi->rdb, PDF_NAME_ColorSpace);
+			csres = pdf_dict_get(ctx, csi->rdb, PDF_NAME(ColorSpace));
 			if (!csres)
 				fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find ColorSpace dictionary");
 			csobj = pdf_dict_gets(ctx, csres, csi->name);
@@ -434,14 +408,14 @@ pdf_process_SC(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, int stroke)
 	{
 		pdf_obj *patres, *patobj, *type;
 
-		patres = pdf_dict_get(ctx, csi->rdb, PDF_NAME_Pattern);
+		patres = pdf_dict_get(ctx, csi->rdb, PDF_NAME(Pattern));
 		if (!patres)
 			fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find Pattern dictionary");
 		patobj = pdf_dict_gets(ctx, patres, csi->name);
 		if (!patobj)
 			fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find Pattern resource '%s'", csi->name);
 
-		type = pdf_dict_get(ctx, patobj, PDF_NAME_PatternType);
+		type = pdf_dict_get(ctx, patobj, PDF_NAME(PatternType));
 
 		if (pdf_to_int(ctx, type) == 1)
 		{
@@ -503,7 +477,7 @@ static pdf_obj *
 resolve_properties(fz_context *ctx, pdf_csi *csi, pdf_obj *obj)
 {
 	if (pdf_is_name(ctx, obj))
-		return pdf_dict_get(ctx, pdf_dict_get(ctx, csi->rdb, PDF_NAME_Properties), obj);
+		return pdf_dict_get(ctx, pdf_dict_get(ctx, csi->rdb, PDF_NAME(Properties)), obj);
 	else
 		return obj;
 }
@@ -616,7 +590,7 @@ pdf_process_keyword(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_strea
 	case B('g','s'):
 		{
 			pdf_obj *gsres, *gsobj;
-			gsres = pdf_dict_get(ctx, csi->rdb, PDF_NAME_ExtGState);
+			gsres = pdf_dict_get(ctx, csi->rdb, PDF_NAME(ExtGState));
 			if (!gsres)
 				fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find ExtGState dictionary");
 			gsobj = pdf_dict_gets(ctx, gsres, csi->name);
@@ -677,13 +651,13 @@ pdf_process_keyword(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_strea
 		{
 			pdf_obj *fontres, *fontobj;
 			pdf_font_desc *font;
-			fontres = pdf_dict_get(ctx, csi->rdb, PDF_NAME_Font);
+			fontres = pdf_dict_get(ctx, csi->rdb, PDF_NAME(Font));
 			if (!fontres)
 				fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find Font dictionary");
 			fontobj = pdf_dict_gets(ctx, fontres, csi->name);
 			if (!fontobj)
 				fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find Font resource '%s'", csi->name);
-			font = load_font_or_hail_mary(ctx, csi->doc, csi->rdb, fontobj, 0, csi->cookie);
+			font = load_font_or_hail_mary(ctx, csi->doc, csi->rdb, fontobj, csi->cookie);
 			fz_try(ctx)
 				proc->op_Tf(ctx, proc, csi->name, font, s[0]);
 			fz_always(ctx)
@@ -769,7 +743,7 @@ pdf_process_keyword(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_strea
 		{
 			pdf_obj *shaderes, *shadeobj;
 			fz_shade *shade;
-			shaderes = pdf_dict_get(ctx, csi->rdb, PDF_NAME_Shading);
+			shaderes = pdf_dict_get(ctx, csi->rdb, PDF_NAME(Shading));
 			if (!shaderes)
 				fz_throw(ctx, FZ_ERROR_SYNTAX, "cannot find Shading dictionary");
 			shadeobj = pdf_dict_gets(ctx, shaderes, csi->name);
@@ -850,13 +824,13 @@ pdf_process_stream(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_stream
 						in_text_array = 0;
 						break;
 					case PDF_TOK_REAL:
-						pdf_array_push_drop(ctx, csi->obj, pdf_new_real(ctx, doc, buf->f));
+						pdf_array_push_real(ctx, csi->obj, buf->f);
 						break;
 					case PDF_TOK_INT:
-						pdf_array_push_drop(ctx, csi->obj, pdf_new_int(ctx, doc, buf->i));
+						pdf_array_push_int(ctx, csi->obj, buf->i);
 						break;
 					case PDF_TOK_STRING:
-						pdf_array_push_drop(ctx, csi->obj, pdf_new_string(ctx, doc, buf->scratch, buf->len));
+						pdf_array_push_string(ctx, csi->obj, buf->scratch, buf->len);
 						break;
 					case PDF_TOK_EOF:
 						break;
@@ -918,7 +892,7 @@ pdf_process_stream(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_stream
 					{
 						pdf_drop_obj(ctx, csi->obj);
 						csi->obj = NULL;
-						csi->obj = pdf_new_name(ctx, doc, buf->scratch);
+						csi->obj = pdf_new_name(ctx, buf->scratch);
 					}
 					else
 						fz_strlcpy(csi->name, buf->scratch, sizeof(csi->name));
@@ -955,7 +929,7 @@ pdf_process_stream(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_stream
 							pdf_drop_obj(ctx, csi->obj);
 							csi->obj = NULL;
 						}
-						csi->obj = pdf_new_string(ctx, doc, buf->scratch, buf->len);
+						csi->obj = pdf_new_string(ctx, buf->scratch, buf->len);
 					}
 					break;
 
@@ -1003,7 +977,7 @@ pdf_process_stream(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_stream
 				else
 				{
 					cookie->errors++;
-					fz_warn(ctx, "unrecoverable error; ignoring rest of page");
+					fz_warn(ctx, "unrecoverable error; ignoring rest of page: %s", fz_caught_message(ctx));
 					tok = PDF_TOK_EOF;
 				}
 			}
@@ -1023,7 +997,7 @@ pdf_process_stream(fz_context *ctx, pdf_processor *proc, pdf_csi *csi, fz_stream
 				}
 				else
 				{
-					fz_warn(ctx, "unrecoverable error; ignoring rest of page");
+					fz_warn(ctx, "unrecoverable error; ignoring rest of page: %s", fz_caught_message(ctx));
 					tok = PDF_TOK_EOF;
 				}
 			}
@@ -1073,7 +1047,7 @@ pdf_process_contents(fz_context *ctx, pdf_processor *proc, pdf_document *doc, pd
 void
 pdf_process_annot(fz_context *ctx, pdf_processor *proc, pdf_document *doc, pdf_page *page, pdf_annot *annot, fz_cookie *cookie)
 {
-	int flags = pdf_to_int(ctx, pdf_dict_get(ctx, annot->obj, PDF_NAME_F));
+	int flags = pdf_dict_get_int(ctx, annot->obj, PDF_NAME(F));
 
 	if (flags & (PDF_ANNOT_IS_INVISIBLE | PDF_ANNOT_IS_HIDDEN))
 		return;
@@ -1093,13 +1067,12 @@ pdf_process_annot(fz_context *ctx, pdf_processor *proc, pdf_document *doc, pdf_p
 	/* TODO: NoZoom and NoRotate */
 
 	/* XXX what resources, if any, to use for this check? */
-	if (pdf_is_hidden_ocg(ctx, doc->ocg, NULL, proc->usage, pdf_dict_get(ctx, annot->obj, PDF_NAME_OC)))
+	if (pdf_is_hidden_ocg(ctx, doc->ocg, NULL, proc->usage, pdf_dict_get(ctx, annot->obj, PDF_NAME(OC))))
 		return;
 
 	if (proc->op_q && proc->op_cm && proc->op_Do_form && proc->op_Q && annot->ap)
 	{
-		fz_matrix matrix;
-		pdf_annot_transform(ctx, annot, &matrix);
+		fz_matrix matrix = pdf_annot_transform(ctx, annot);
 		proc->op_q(ctx, proc);
 		proc->op_cm(ctx, proc,
 			matrix.a, matrix.b,
@@ -1205,14 +1178,14 @@ pdf_tos_make_trm(fz_context *ctx, pdf_text_object_state *tos, pdf_text_state *te
 		tos->char_ty = w1 * text->size + text->char_space;
 	}
 
-	fz_concat(trm, &tsm, &tos->tm);
+	*trm = fz_concat(tsm, tos->tm);
 
 	tos->cid = cid;
 	tos->gid = pdf_font_cid_to_gid(ctx, fontdesc, cid);
 	tos->fontdesc = fontdesc;
 
 	/* Compensate for the glyph cache limited positioning precision */
-	fz_expand_rect(fz_bound_glyph(ctx, fontdesc->font, tos->gid, trm, &tos->char_bbox), 1);
+	tos->char_bbox = fz_expand_rect(fz_bound_glyph(ctx, fontdesc->font, tos->gid, *trm), 1);
 
 	return tos->gid;
 }
@@ -1220,15 +1193,14 @@ pdf_tos_make_trm(fz_context *ctx, pdf_text_object_state *tos, pdf_text_state *te
 void
 pdf_tos_move_after_char(fz_context *ctx, pdf_text_object_state *tos)
 {
-	fz_union_rect(&tos->text_bbox, &tos->char_bbox);
-
-	fz_pre_translate(&tos->tm, tos->char_tx, tos->char_ty);
+	tos->text_bbox = fz_union_rect(tos->text_bbox, tos->char_bbox);
+	tos->tm = fz_pre_translate(tos->tm, tos->char_tx, tos->char_ty);
 }
 
 void
 pdf_tos_translate(pdf_text_object_state *tos, float tx, float ty)
 {
-	fz_pre_translate(&tos->tlm, tx, ty);
+	tos->tlm = fz_pre_translate(tos->tlm, tx, ty);
 	tos->tm = tos->tlm;
 }
 
@@ -1247,6 +1219,6 @@ pdf_tos_set_matrix(pdf_text_object_state *tos, float a, float b, float c, float 
 void
 pdf_tos_newline(pdf_text_object_state *tos, float leading)
 {
-	fz_pre_translate(&tos->tlm, 0, -leading);
+	tos->tlm = fz_pre_translate(tos->tlm, 0, -leading);
 	tos->tm = tos->tlm;
 }

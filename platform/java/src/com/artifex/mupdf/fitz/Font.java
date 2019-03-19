@@ -6,6 +6,15 @@ public class Font
 		Context.init();
 	}
 
+	public static final int LATIN = 0;
+	public static final int GREEK = 1;
+	public static final int CYRILLIC = 2;
+
+	public static final int ADOBE_CNS = 0;
+	public static final int ADOBE_GB = 1;
+	public static final int ADOBE_JAPAN = 2;
+	public static final int ADOBE_KOREA = 3;
+
 	private long pointer;
 
 	protected native void finalize();

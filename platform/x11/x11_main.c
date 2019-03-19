@@ -184,7 +184,7 @@ char *wintextinput(pdfapp_t *app, char *inittext, int retry)
 	return NULL;
 }
 
-int winchoiceinput(pdfapp_t *app, int nopts, char *opts[], int *nvals, char *vals[])
+int winchoiceinput(pdfapp_t *app, int nopts, const char *opts[], int *nvals, const char *vals[])
 {
 	/* FIXME: temporary dummy implementation */
 	return 0;
@@ -317,13 +317,38 @@ void winreplacefile(char *source, char *target)
 
 void wincopyfile(char *source, char *target)
 {
-	char *buf = malloc(strlen(source)+strlen(target)+5);
-	if (buf)
+	FILE *in, *out;
+	char buf[32 << 10];
+	int n;
+
+	in = fopen(source, "rb");
+	if (!in)
 	{
-		sprintf(buf, "cp %s %s", source, target);
-		system(buf);
-		free(buf);
+		winerror(&gapp, "cannot open source file for copying");
+		return;
 	}
+	out = fopen(target, "wb");
+	if (!out)
+	{
+		winerror(&gapp, "cannot open target file for copying");
+		fclose(in);
+		return;
+	}
+
+	for (;;)
+	{
+		n = fread(buf, 1, sizeof buf, in);
+		fwrite(buf, 1, n, out);
+		if (n < sizeof buf)
+		{
+			if (ferror(in))
+				winerror(&gapp, "cannot read data from source file");
+			break;
+		}
+	}
+
+	fclose(out);
+	fclose(in);
 }
 
 void cleanup(pdfapp_t *app)
@@ -514,7 +539,7 @@ static void winblit(pdfapp_t *app)
 
 		if (gapp.iscopying || justcopied)
 		{
-			pdfapp_invert(&gapp, &gapp.selr);
+			pdfapp_invert(&gapp, gapp.selr);
 			justcopied = 1;
 		}
 
@@ -557,7 +582,7 @@ static void winblit(pdfapp_t *app)
 
 		if (gapp.iscopying || justcopied)
 		{
-			pdfapp_invert(&gapp, &gapp.selr);
+			pdfapp_invert(&gapp, gapp.selr);
 			justcopied = 1;
 		}
 	}
@@ -753,6 +778,16 @@ void winopenuri(pdfapp_t *app, char *buf)
 		exit(0);
 	}
 	waitpid(pid, NULL, 0);
+}
+
+int winquery(pdfapp_t *app, const char *query)
+{
+	return QUERY_NO;
+}
+
+int wingetcertpath(char *buf, int len)
+{
+	return 0;
 }
 
 static void onkey(int c, int modifiers)

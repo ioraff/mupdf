@@ -25,6 +25,9 @@ typedef unsigned char uint8_t;
 typedef unsigned short int uint16_t;
 typedef unsigned int uint32_t;
 typedef unsigned __int64 uint64_t;
+#ifndef INT64_MAX
+#define INT64_MAX 9223372036854775807i64
+#endif
 #else
 #include <stdint.h> /* needed for int64_t */
 #endif
@@ -54,10 +57,12 @@ typedef unsigned __int64 uint64_t;
 	Some differences in libc can be smoothed over
 */
 
-#ifdef __APPLE__
+#ifndef __STRICT_ANSI__
+#if defined(__APPLE__)
 #define HAVE_SIGSETJMP
-#elif defined(__unix) && !defined(__NACL__)
+#elif defined(__unix)
 #define HAVE_SIGSETJMP
+#endif
 #endif
 
 /*
@@ -120,6 +125,10 @@ static __inline int signbit(double x)
 #define hypotf _hypotf
 #define atoll _atoi64
 
+#endif
+
+#ifdef _WIN32
+
 char *fz_utf8_from_wchar(const wchar_t *s);
 wchar_t *fz_wchar_from_utf8(const char *s);
 
@@ -140,10 +149,10 @@ void fz_free_argv(int argc, char **argv);
 /* inline is standard in C++. For some compilers we can enable it within C too. */
 
 #ifndef __cplusplus
-#if __STDC_VERSION__ == 199901L /* C99 */
-#elif _MSC_VER >= 1500 /* MSVC 9 or newer */
+#if defined (__STDC_VERSION_) && (__STDC_VERSION__ >= 199901L) /* C99 */
+#elif defined(_MSC_VER) && (_MSC_VER >= 1500) /* MSVC 9 or newer */
 #define inline __inline
-#elif __GNUC__ >= 3 /* GCC 3 or newer */
+#elif defined(__GNUC__) && (__GNUC__ >= 3) /* GCC 3 or newer */
 #define inline __inline
 #else /* Unknown or ancient */
 #define inline
@@ -151,13 +160,14 @@ void fz_free_argv(int argc, char **argv);
 #endif
 
 /* restrict is standard in C99, but not in all C++ compilers. */
-#if __STDC_VERSION__ == 199901L /* C99 */
-#elif _MSC_VER >= 1500 /* MSVC 9 or newer */
-#define restrict __restrict
-#elif __GNUC__ >= 3 /* GCC 3 or newer */
-#define restrict __restrict
+#if defined (__STDC_VERSION_) && (__STDC_VERSION__ >= 199901L) /* C99 */
+#define FZ_RESTRICT restrict
+#elif defined(_MSC_VER) && (_MSC_VER >= 1600) /* MSVC 10 or newer */
+#define FZ_RESTRICT __restrict
+#elif defined(__GNUC__) && (__GNUC__ >= 3) /* GCC 3 or newer */
+#define FZ_RESTRICT __restrict
 #else /* Unknown or ancient */
-#define restrict
+#define FZ_RESTRICT
 #endif
 
 /* noreturn is a GCC extension */
@@ -172,19 +182,20 @@ void fz_free_argv(int argc, char **argv);
 #endif
 
 /* Flag unused parameters, for use with 'static inline' functions in headers. */
-#if __GNUC__ > 2 || __GNUC__ == 2 && __GNUC_MINOR__ >= 7
+#if defined(__GNUC__) && (__GNUC__ > 2 || __GNUC__ == 2 && __GNUC_MINOR__ >= 7)
 #define FZ_UNUSED __attribute__((__unused__))
 #else
 #define FZ_UNUSED
 #endif
 
 /* GCC can do type checking of printf strings */
-#ifndef __printflike
-#if __GNUC__ > 2 || __GNUC__ == 2 && __GNUC_MINOR__ >= 7
-#define __printflike(fmtarg, firstvararg) \
-	__attribute__((__format__ (__printf__, fmtarg, firstvararg)))
+#ifdef __printflike
+#define FZ_PRINTFLIKE(F,V) __printflike(F,V)
 #else
-#define __printflike(fmtarg, firstvararg)
+#if defined(__GNUC__) && (__GNUC__ > 2 || __GNUC__ == 2 && __GNUC_MINOR__ >= 7)
+#define FZ_PRINTFLIKE(F,V) __attribute__((__format__ (__printf__, F, V)))
+#else
+#define FZ_PRINTFLIKE(F,V)
 #endif
 #endif
 

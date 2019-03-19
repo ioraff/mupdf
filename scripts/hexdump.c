@@ -3,9 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-static int zero, string;
+static int string;
 
 static int
 hexdump(FILE *fo, FILE *fi)
@@ -33,43 +32,28 @@ hexdump(FILE *fo, FILE *fi)
 	return n;
 }
 
-static int
-usage(void)
-{
-	fprintf(stderr, "usage: hexdump [-0] [-s] [-p prefix] output.c input.dat\n");
-	exit(1);
-}
-
 int
 main(int argc, char **argv)
 {
 	FILE *fo;
 	FILE *fi;
-	char filenamebuf[256], *filename = filenamebuf;
+	char name[256];
 	char *basename;
 	char *p;
-	char *prefix = "";
-	int c, i, size;
+	int i, optind, size;
 
 	if (argc < 3)
-		usage();
-
-	while ((c = getopt(argc, argv, "0sp:")) != -1)
 	{
-		switch (c)
-		{
-		case '0':
-			zero = 1;
-			break;
-		case 's':
-			string = 1;
-			break;
-		case 'p':
-			prefix = optarg;
-			break;
-		case '?':
-			usage();
-		}
+		fprintf(stderr, "usage: hexdump [-0] [-s] output.c input.dat\n");
+		return 1;
+	}
+
+	string = 0;
+	optind = 1;
+
+	if (!strcmp(argv[optind], "-s")) {
+		++optind;
+		string = 1;
 	}
 
 	fo = fopen(argv[optind], "wb");
@@ -97,7 +81,7 @@ main(int argc, char **argv)
 		else
 			basename = argv[i];
 
-		if (strlen(basename) >= sizeof(filenamebuf))
+		if (strlen(basename) >= sizeof(name))
 		{
 			fclose(fi);
 			fclose(fo);
@@ -105,13 +89,8 @@ main(int argc, char **argv)
 			return 1;
 		}
 
-		strcpy(filename, argv[i]);
-		while (*prefix && *prefix == *filename)
-		{
-			++prefix;
-			++filename;
-		}
-		for (p = filename; *p; ++p)
+		strcpy(name, basename);
+		for (p = name; *p; ++p)
 		{
 			if (*p == '/' || *p == '.' || *p == '\\' || *p == '-')
 				*p = '_';
@@ -121,19 +100,11 @@ main(int argc, char **argv)
 		size = ftell(fi);
 		fseek(fi, 0, SEEK_SET);
 
-		fprintf(fo, "const int fz_%s_size = %d;\n", filename, size + zero);
-		fprintf(fo, "const unsigned char fz_%s[] =", filename);
+		fprintf(fo, "const unsigned char _binary_%s[%d] =", name, size);
 		fprintf(fo, string ? "\n" : " {\n");
 		hexdump(fo, fi);
-		if (!zero)
-		{
-			fprintf(fo, string ? ";\n" : "};\n");
-		}
-		else
-		{
-			/* zero-terminate so we can hexdump text files into C strings */
-			fprintf(fo, string ? ";\n" : "0};\n");
-		}
+		fprintf(fo, string ? ";\n" : "};\n");
+		fprintf(fo, "unsigned int _binary_%s_size = %d;\n", name, size);
 
 		fclose(fi);
 	}

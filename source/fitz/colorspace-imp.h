@@ -6,13 +6,6 @@
 #include "mupdf/fitz/color-management.h"
 #include "mupdf/fitz/pixmap.h"
 
-#define FZ_ICC_PROFILE_GRAY "DeviceGray"
-#define FZ_ICC_PROFILE_RGB "DeviceRGB"
-#define FZ_ICC_PROFILE_BGR "DeviceBGR"
-#define FZ_ICC_PROFILE_CMYK "DeviceCMYK"
-#define FZ_ICC_PROFILE_LAB "Lab"
-
-int fz_cmm_avoid_white_fix_flag(fz_context *ctx);
 void fz_cmm_transform_pixmap(fz_context *ctx, fz_icclink *link, fz_pixmap *dst, fz_pixmap *src);
 void fz_cmm_transform_color(fz_context *ctx, fz_icclink *link, unsigned short *dst, const unsigned short *src);
 void fz_cmm_init_link(fz_context *ctx, fz_icclink *link, const fz_iccprofile *dst, int dst_extras, const fz_iccprofile *src, int src_extras, const fz_iccprofile *prf, const fz_color_params *rend, int cmm_flags, int num_bytes, int copy_spots);
@@ -24,8 +17,8 @@ void fz_cmm_fin_profile(fz_context *ctx, fz_iccprofile *profile);
 
 enum
 {
-	FZ_CS_HAS_CMYK = (FZ_CS_LAST_PUBLIC_FLAG<<1),
-	FZ_CS_HAS_SPOTS = (FZ_CS_LAST_PUBLIC_FLAG<<2),
+	FZ_CS_HAS_CMYK = (FZ_COLORSPACE_LAST_PUBLIC_FLAG<<1),
+	FZ_CS_HAS_SPOTS = (FZ_COLORSPACE_LAST_PUBLIC_FLAG<<2),
 	FZ_CS_HAS_CMYK_AND_SPOTS = FZ_CS_HAS_CMYK|FZ_CS_HAS_SPOTS
 };
 
@@ -34,8 +27,9 @@ struct fz_colorspace_s
 	fz_key_storable key_storable;
 	size_t size;
 	char name[24];
-	unsigned char n;
-	unsigned char flags;
+	enum fz_colorspace_type type;
+	int flags;
+	int n;
 	fz_colorspace_convert_fn *to_ccs;
 	fz_colorspace_convert_fn *from_ccs;
 	fz_colorspace_clamp_fn *clamp;
@@ -47,6 +41,7 @@ struct fz_colorspace_s
 
 struct fz_iccprofile_s
 {
+	char *desc;
 	int num_devcomp;
 	int bgr;
 	fz_buffer *buffer;

@@ -29,22 +29,20 @@ pdf_preload_image_resources(fz_context *ctx, pdf_document *doc)
 	int len, k;
 	pdf_obj *obj = NULL;
 	pdf_obj *type;
-	pdf_obj *res = NULL;
 	fz_image *image = NULL;
 	unsigned char digest[16];
 
 	fz_var(obj);
 	fz_var(image);
-	fz_var(res);
 
 	fz_try(ctx)
 	{
 		len = pdf_count_objects(ctx, doc);
 		for (k = 1; k < len; k++)
 		{
-			obj = pdf_load_object(ctx, doc, k);
-			type = pdf_dict_get(ctx, obj, PDF_NAME_Subtype);
-			if (pdf_name_eq(ctx, type, PDF_NAME_Image))
+			obj = pdf_new_indirect(ctx, doc, k, 0);
+			type = pdf_dict_get(ctx, obj, PDF_NAME(Subtype));
+			if (pdf_name_eq(ctx, type, PDF_NAME(Image)))
 			{
 				image = pdf_load_image(ctx, doc, obj);
 				fz_md5_image(ctx, image, digest);
@@ -102,7 +100,7 @@ pdf_insert_image_resource(fz_context *ctx, pdf_document *doc, unsigned char dige
 		fz_warn(ctx, "warning: image resource already present");
 	else
 		res = pdf_keep_obj(ctx, obj);
-	return res;
+	return pdf_keep_obj(ctx, res);
 }
 
 /* We do need to come up with an effective way to see what is already in the
@@ -111,15 +109,18 @@ pdf_insert_image_resource(fz_context *ctx, pdf_document *doc, unsigned char dige
  * it may be more problematic. */
 
 pdf_obj *
-pdf_find_font_resource(fz_context *ctx, pdf_document *doc, fz_buffer *item, unsigned char digest[16])
+pdf_find_font_resource(fz_context *ctx, pdf_document *doc, int type, int encoding, fz_font *item, unsigned char digest[16])
 {
 	pdf_obj *res;
 
 	if (!doc->resources.fonts)
 		doc->resources.fonts = fz_new_hash_table(ctx, 4096, 16, -1, pdf_drop_obj_as_void);
 
-	/* Create md5 and see if we have the item in our table */
-	fz_md5_buffer(ctx, item, digest);
+	fz_font_digest(ctx, item, digest);
+
+	digest[0] += type;
+	digest[1] += encoding;
+
 	res = fz_hash_find(ctx, doc->resources.fonts, digest);
 	if (res)
 		pdf_keep_obj(ctx, res);
@@ -134,7 +135,7 @@ pdf_insert_font_resource(fz_context *ctx, pdf_document *doc, unsigned char diges
 		fz_warn(ctx, "warning: font resource already present");
 	else
 		res = pdf_keep_obj(ctx, obj);
-	return res;
+	return pdf_keep_obj(ctx, res);
 }
 
 void

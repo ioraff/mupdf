@@ -7,15 +7,89 @@
 #include <math.h>
 #include <string.h>
 
-/* CMM module */
+/* Colorspace feature tests */
 
-int
-fz_cmm_avoid_white_fix_flag(fz_context *ctx)
+int fz_colorspace_is_gray(fz_context *ctx, const fz_colorspace *cs)
 {
-	if (ctx && ctx->colorspace && ctx->colorspace->cmm && ctx->cmm_instance)
-		return ctx->colorspace->cmm->avoid_white_fix_flag;
-	return 0;
+	return cs && cs->type == FZ_COLORSPACE_GRAY;
 }
+
+int fz_colorspace_is_rgb(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && cs->type == FZ_COLORSPACE_RGB;
+}
+
+int fz_colorspace_is_bgr(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && cs->type == FZ_COLORSPACE_BGR;
+}
+
+int fz_colorspace_is_cmyk(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && cs->type == FZ_COLORSPACE_CMYK;
+}
+
+int fz_colorspace_is_lab(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && cs->type == FZ_COLORSPACE_LAB;
+}
+
+int fz_colorspace_is_indexed(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->type == FZ_COLORSPACE_INDEXED);
+}
+
+int fz_colorspace_is_device_n(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->type == FZ_COLORSPACE_SEPARATION);
+}
+
+int fz_colorspace_is_subtractive(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->type == FZ_COLORSPACE_CMYK || cs->type == FZ_COLORSPACE_SEPARATION);
+}
+
+int fz_colorspace_is_device(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->flags & FZ_COLORSPACE_IS_DEVICE);
+}
+
+int fz_colorspace_is_icc(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->flags & FZ_COLORSPACE_IS_ICC);
+}
+
+int fz_colorspace_is_cal(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->flags & FZ_COLORSPACE_IS_CAL);
+}
+
+int fz_colorspace_is_lab_icc(fz_context *ctx, const fz_colorspace *cs)
+{
+	return fz_colorspace_is_lab(ctx, cs) && fz_colorspace_is_icc(ctx, cs);
+}
+
+int fz_colorspace_is_device_gray(fz_context *ctx, const fz_colorspace *cs)
+{
+	return fz_colorspace_is_device(ctx, cs) && fz_colorspace_is_gray(ctx, cs);
+}
+
+int fz_colorspace_is_device_cmyk(fz_context *ctx, const fz_colorspace *cs)
+{
+	return fz_colorspace_is_device(ctx, cs) && fz_colorspace_is_cmyk(ctx, cs);
+}
+
+int fz_colorspace_device_n_has_only_cmyk(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && ((cs->flags & FZ_CS_HAS_CMYK_AND_SPOTS) == FZ_CS_HAS_CMYK);
+}
+
+int fz_colorspace_device_n_has_cmyk(fz_context *ctx, const fz_colorspace *cs)
+{
+	return cs && (cs->flags & FZ_CS_HAS_CMYK);
+}
+
+/* CMM module */
 
 void
 fz_cmm_transform_pixmap(fz_context *ctx, fz_icclink *link, fz_pixmap *dst, fz_pixmap *src)
@@ -73,39 +147,46 @@ void fz_cmm_fin_profile(fz_context *ctx, fz_iccprofile *profile)
 
 #define SLOWCMYK
 
+#ifdef NO_ICC
+
 const unsigned char *
-fz_lookup_icc(fz_context *ctx, const char *name, size_t *size)
+fz_lookup_icc(fz_context *ctx, enum fz_colorspace_type type, size_t *size)
 {
-#ifndef NO_ICC
-	if (fz_get_cmm_engine(ctx) == NULL)
-		return *size = 0, NULL;
-	if (!strcmp(name, FZ_ICC_PROFILE_GRAY)) {
-		extern const int fz_resources_icc_gray_icc_size;
-		extern const unsigned char fz_resources_icc_gray_icc[];
-		*size = fz_resources_icc_gray_icc_size;
-		return fz_resources_icc_gray_icc;
-	}
-	if (!strcmp(name, FZ_ICC_PROFILE_RGB) || !strcmp(name, FZ_ICC_PROFILE_BGR)) {
-		extern const int fz_resources_icc_rgb_icc_size;
-		extern const unsigned char fz_resources_icc_rgb_icc[];
-		*size = fz_resources_icc_rgb_icc_size;
-		return fz_resources_icc_rgb_icc;
-	}
-	if (!strcmp(name, FZ_ICC_PROFILE_CMYK)) {
-		extern const int fz_resources_icc_cmyk_icc_size;
-		extern const unsigned char fz_resources_icc_cmyk_icc[];
-		*size = fz_resources_icc_cmyk_icc_size;
-		return fz_resources_icc_cmyk_icc;
-	}
-	if (!strcmp(name, FZ_ICC_PROFILE_LAB)) {
-		extern const int fz_resources_icc_lab_icc_size;
-		extern const unsigned char fz_resources_icc_lab_icc[];
-		*size = fz_resources_icc_lab_icc_size;
-		return fz_resources_icc_lab_icc;
-	}
-#endif
 	return *size = 0, NULL;
 }
+
+#else
+
+#include "icc/gray.icc.h"
+#include "icc/rgb.icc.h"
+#include "icc/cmyk.icc.h"
+#include "icc/lab.icc.h"
+
+const unsigned char *
+fz_lookup_icc(fz_context *ctx, enum fz_colorspace_type type, size_t *size)
+{
+	if (fz_get_cmm_engine(ctx) == NULL)
+		return *size = 0, NULL;
+	if (type == FZ_COLORSPACE_GRAY) {
+		*size = resources_icc_gray_icc_len;
+		return resources_icc_gray_icc;
+	}
+	if (type == FZ_COLORSPACE_RGB || type == FZ_COLORSPACE_BGR) {
+		*size = resources_icc_rgb_icc_len;
+		return resources_icc_rgb_icc;
+	}
+	if (type == FZ_COLORSPACE_CMYK) {
+		*size = resources_icc_cmyk_icc_len;
+		return resources_icc_cmyk_icc;
+	}
+	if (type == FZ_COLORSPACE_LAB) {
+		*size = resources_icc_lab_icc_len;
+		return resources_icc_lab_icc;
+	}
+	return *size = 0, NULL;
+}
+
+#endif
 
 /* Same order as needed by lcms */
 static const char *fz_intent_names[] =
@@ -157,14 +238,23 @@ clamp_default(const fz_colorspace *cs, const float *src, float *dst)
 }
 
 fz_colorspace *
-fz_new_colorspace(fz_context *ctx, const char *name, int n, int flags, fz_colorspace_convert_fn *to_ccs, fz_colorspace_convert_fn *from_ccs, fz_colorspace_base_fn *base, fz_colorspace_clamp_fn *clamp, fz_colorspace_destruct_fn *destruct, void *data, size_t size)
+fz_new_colorspace(fz_context *ctx,
+		const char *name,
+		enum fz_colorspace_type type, int flags, int n,
+		fz_colorspace_convert_fn *to_ccs,
+		fz_colorspace_convert_fn *from_ccs,
+		fz_colorspace_base_fn *base,
+		fz_colorspace_clamp_fn *clamp,
+		fz_colorspace_destruct_fn *destruct,
+		void *data, size_t size)
 {
 	fz_colorspace *cs = fz_malloc_struct(ctx, fz_colorspace);
 	FZ_INIT_KEY_STORABLE(cs, 1, fz_drop_colorspace_imp);
 	cs->size = sizeof(fz_colorspace) + size;
 	fz_strlcpy(cs->name, name ? name : "UNKNOWN", sizeof cs->name);
+	cs->type = type;
+	cs->flags = flags;
 	cs->n = n;
-	cs->flags = (unsigned char)flags;
 	cs->to_ccs = to_ccs;
 	cs->from_ccs = from_ccs;
 	cs->get_base = base;
@@ -201,6 +291,12 @@ void
 fz_drop_colorspace_store_key(fz_context *ctx, fz_colorspace *cs)
 {
 	fz_drop_key_storable_key(ctx, &cs->key_storable);
+}
+
+enum fz_colorspace_type
+fz_colorspace_type(fz_context *ctx, fz_colorspace *cs)
+{
+	return cs ? cs->type : FZ_COLORSPACE_NONE;
 }
 
 /* icc links */
@@ -392,12 +488,53 @@ fz_icc_from_cal(fz_context *ctx, const fz_colorspace *cs)
 	return profile;
 }
 
+static fz_iccprofile *
+fz_get_icc_from_cal(fz_context *ctx, const fz_colorspace *cs)
+{
+	fz_cal_colorspace *cal;
+	fz_iccprofile *icc = NULL;
+
+	cal = cs->data;
+	icc = cal->profile;
+	/* Check if we have any work to do. */
+	if (icc == NULL)
+		icc = fz_icc_from_cal(ctx, cs);
+	if (icc->cmm_handle == NULL)
+	{
+		fz_cmm_init_profile(ctx, icc);
+
+		/* The CMM failed to make a profile. Use the default. */
+		if (icc->cmm_handle == NULL)
+		{
+			switch (cs->n)
+			{
+			case 1:
+				icc = fz_device_gray(ctx)->data;
+				break;
+			case 3:
+				icc = fz_device_rgb(ctx)->data;
+				break;
+			case 4:
+				icc = fz_device_cmyk(ctx)->data;
+				break;
+			default:
+				fz_throw(ctx, FZ_ERROR_GENERIC, "Poorly formed Cal color space");
+			}
+			/* To avoid repeated failures building the pdf-cal color space,
+			* assign the default profile. */
+			fz_cmm_fin_profile(ctx, icc);
+			cal->profile = icc;
+		}
+	}
+	return icc;
+}
+
 static fz_icclink *
 fz_get_icc_link(fz_context *ctx, const fz_colorspace *dst, int dst_extras, const fz_colorspace *src, int src_extras, const fz_colorspace *prf, const fz_color_params *rend, int num_bytes, int copy_spots, int *src_n)
 {
 	fz_icclink *link = NULL;
 	fz_iccprofile *src_icc = NULL;
-	fz_iccprofile *dst_icc = dst->data;
+	fz_iccprofile *dst_icc = NULL;
 	fz_iccprofile *prf_icc = NULL;
 	fz_link_key *key = NULL;
 	fz_icclink *new_link;
@@ -410,46 +547,18 @@ fz_get_icc_link(fz_context *ctx, const fz_colorspace *dst, int dst_extras, const
 	if (fz_colorspace_is_icc(ctx, src))
 		src_icc = src->data;
 	else if (fz_colorspace_is_cal(ctx, src))
-	{
-		fz_cal_colorspace *cal;
-
-		cal = src->data;
-		src_icc = cal->profile;
-		/* Check if we have any work to do. */
-		if (src_icc == NULL)
-			src_icc = fz_icc_from_cal(ctx, src);
-		if (src_icc->cmm_handle == NULL)
-		{
-			fz_cmm_init_profile(ctx, src_icc);
-
-			/* The CMM failed to make a profile. Use the default. */
-			if (src_icc->cmm_handle == NULL)
-			{
-				switch (src->n)
-				{
-				case 1:
-					src_icc = fz_device_gray(ctx)->data;
-					break;
-				case 3:
-					src_icc = fz_device_rgb(ctx)->data;
-					break;
-				case 4:
-					src_icc = fz_device_cmyk(ctx)->data;
-					break;
-				default:
-					fz_throw(ctx, FZ_ERROR_GENERIC, "Poorly formed Cal color space");
-				}
-				/* To avoid repeated failures building the pdf-cal color space,
-				 * assign the default profile. */
-				fz_cmm_fin_profile(ctx, src_icc);
-				cal->profile = src_icc;
-			}
-		}
-	}
+		src_icc = fz_get_icc_from_cal(ctx, src);
 	else
 		src_icc = get_base_icc_profile(ctx, src);
 
-	if (src_icc == NULL)
+	if (fz_colorspace_is_icc(ctx, dst))
+		dst_icc = dst->data;
+	else if (fz_colorspace_is_cal(ctx, dst))
+		dst_icc = fz_get_icc_from_cal(ctx, dst);
+	else
+		dst_icc = get_base_icc_profile(ctx, dst);
+
+	if (dst_icc == NULL || src_icc == NULL)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Profile missing during link creation");
 
 	*src_n = src_icc->num_devcomp;
@@ -679,22 +788,12 @@ clamp_lab(const fz_colorspace *cs, const float *src, float *dst)
 		dst[i] = fz_clamp(src[i], i ? -128 : 0, i ? 127 : 100);
 }
 
-int fz_colorspace_is_lab(fz_context *ctx, const fz_colorspace *cs)
-{
-	return cs && cs->to_ccs == lab_to_rgb;
-}
+static fz_colorspace k_default_gray = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceGray", FZ_COLORSPACE_GRAY, FZ_COLORSPACE_IS_DEVICE, 1, gray_to_rgb, rgb_to_gray, clamp_default, NULL, NULL, NULL, { "Gray" } };
+static fz_colorspace k_default_rgb = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceRGB", FZ_COLORSPACE_RGB, FZ_COLORSPACE_IS_DEVICE, 3, rgb_to_rgb, rgb_to_rgb, clamp_default, NULL, NULL, NULL, { "Red", "Green", "Blue" } };
+static fz_colorspace k_default_bgr = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceBGR", FZ_COLORSPACE_BGR, FZ_COLORSPACE_IS_DEVICE, 3, bgr_to_rgb, rgb_to_bgr, clamp_default, NULL, NULL, NULL, { "Blue", "Green", "Red" }  };
+static fz_colorspace k_default_cmyk = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceCMYK", FZ_COLORSPACE_CMYK, FZ_COLORSPACE_IS_DEVICE, 4, cmyk_to_rgb, rgb_to_cmyk, clamp_default, NULL, NULL, NULL, { "Cyan", "Magenta", "Yellow", "Black" } };
+static fz_colorspace k_default_lab = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "Lab", FZ_COLORSPACE_LAB, 0, 3, lab_to_rgb, rgb_to_lab, clamp_lab, NULL, NULL, NULL, { "L*", "a*", "b*" } };
 
-int
-fz_colorspace_is_subtractive(fz_context *ctx, const fz_colorspace *cs)
-{
-	return (cs && !!(cs->flags & FZ_CS_SUBTRACTIVE));
-}
-
-static fz_colorspace k_default_gray = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceGray", 1, FZ_CS_DEVICE_GRAY, gray_to_rgb, rgb_to_gray, clamp_default, NULL, NULL, NULL, { "Gray" } };
-static fz_colorspace k_default_rgb = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceRGB", 3, 0, rgb_to_rgb, rgb_to_rgb, clamp_default, NULL, NULL, NULL, { "Red", "Green", "Blue" } };
-static fz_colorspace k_default_bgr = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceBGR", 3, 0, bgr_to_rgb, rgb_to_bgr, clamp_default, NULL, NULL, NULL, { "Blue", "Green", "Red" }  };
-static fz_colorspace k_default_cmyk = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "DeviceCMYK", 4, FZ_CS_SUBTRACTIVE, cmyk_to_rgb, rgb_to_cmyk, clamp_default, NULL, NULL, NULL, { "Cyan", "Magenta", "Yellow", "Black" } };
-static fz_colorspace k_default_lab = { { {-1, fz_drop_colorspace_imp}, 0 }, 0, "Lab", 3, 0, lab_to_rgb, rgb_to_lab, clamp_lab, NULL, NULL, NULL, { "L*", "a*", "b*" } };
 static fz_color_params k_default_color_params = { FZ_RI_RELATIVE_COLORIMETRIC, 1, 0, 0 };
 
 static fz_colorspace *default_gray = &k_default_gray;
@@ -751,11 +850,11 @@ void fz_set_cmm_engine(fz_context *ctx, const fz_cmm_engine *engine)
 	fz_new_cmm_context(ctx);
 	if (engine)
 	{
-		cct->gray = fz_new_icc_colorspace(ctx, FZ_ICC_PROFILE_GRAY, 1, NULL);
-		cct->rgb = fz_new_icc_colorspace(ctx, FZ_ICC_PROFILE_RGB, 3, NULL);
-		cct->bgr = fz_new_icc_colorspace(ctx, FZ_ICC_PROFILE_BGR, 3, NULL);
-		cct->cmyk = fz_new_icc_colorspace(ctx, FZ_ICC_PROFILE_CMYK, 4, NULL);
-		cct->lab = fz_new_icc_colorspace(ctx, FZ_ICC_PROFILE_LAB, 3, NULL);
+		cct->gray = fz_new_icc_colorspace(ctx, FZ_COLORSPACE_GRAY, NULL);
+		cct->rgb = fz_new_icc_colorspace(ctx, FZ_COLORSPACE_RGB, NULL);
+		cct->bgr = fz_new_icc_colorspace(ctx, FZ_COLORSPACE_BGR, NULL);
+		cct->cmyk = fz_new_icc_colorspace(ctx, FZ_COLORSPACE_CMYK, NULL);
+		cct->lab = fz_new_icc_colorspace(ctx, FZ_COLORSPACE_LAB, NULL);
 	}
 	else
 		set_no_icc(cct);
@@ -2031,8 +2130,8 @@ fast_cmyk_to_rgb_ARM(unsigned char *dst, unsigned char *src, int n)
 }
 #endif
 
-static inline void cached_cmyk_conv(unsigned char *restrict const pr, unsigned char *restrict const pg, unsigned char *restrict const pb,
-				unsigned int *restrict const C, unsigned int *restrict const M, unsigned int *restrict const Y, unsigned int *restrict const K,
+static inline void cached_cmyk_conv(unsigned char * FZ_RESTRICT pr, unsigned char * FZ_RESTRICT pg, unsigned char * FZ_RESTRICT pb,
+				unsigned int * FZ_RESTRICT C, unsigned int * FZ_RESTRICT M, unsigned int * FZ_RESTRICT Y, unsigned int * FZ_RESTRICT K,
 				unsigned int c, unsigned int m, unsigned int y, unsigned int k)
 {
 #ifdef SLOWCMYK
@@ -2616,8 +2715,8 @@ icc_conv_pixmap(fz_context *ctx, fz_pixmap *dst, fz_pixmap *src, fz_colorspace *
 	unsigned char *inputpos, *outputpos;
 	int src_n;
 
-	/* Handle DeviceGray->CMYK as K only. See note in Section 6.3 of PDF spec.*/
-	if (fz_colorspace_is_device_gray(ctx, src->colorspace) && fz_colorspace_is_subtractive(ctx, dst->colorspace))
+	/* Handle DeviceGray to CMYK as K only. See note in Section 6.3 of PDF spec 1.7. */
+	if (fz_colorspace_is_device_gray(ctx, srcs) && fz_colorspace_is_cmyk(ctx, dsts))
 	{
 		fast_gray_to_cmyk(ctx, dst, src, prf, default_cs, color_params, copy_spots);
 		return;
@@ -2626,19 +2725,21 @@ icc_conv_pixmap(fz_context *ctx, fz_pixmap *dst, fz_pixmap *src, fz_colorspace *
 	/* Check if we have to do a color space default substitution */
 	if (default_cs)
 	{
-		switch (fz_colorspace_n(ctx, src->colorspace))
+		switch (fz_colorspace_type(ctx, src->colorspace))
 		{
-		case 1:
+		case FZ_COLORSPACE_GRAY:
 			if (src->colorspace == fz_device_gray(ctx))
 				srcs = fz_default_gray(ctx, default_cs);
 			break;
-		case 3:
+		case FZ_COLORSPACE_RGB:
 			if (src->colorspace == fz_device_rgb(ctx))
 				srcs = fz_default_rgb(ctx, default_cs);
 			break;
-		case 4:
+		case FZ_COLORSPACE_CMYK:
 			if (src->colorspace == fz_device_cmyk(ctx))
 				srcs = fz_default_cmyk(ctx, default_cs);
+			break;
+		default:
 			break;
 		}
 	}
@@ -2709,7 +2810,6 @@ icc_base_conv_pixmap(fz_context *ctx, fz_pixmap *dst, fz_pixmap *src, fz_colorsp
 	int i, j;
 	unsigned char *inputpos, *outputpos;
 	fz_pixmap *base;
-	fz_irect bbox;
 	int h, len;
 	float src_f[FZ_MAX_COLORS], des_f[FZ_MAX_COLORS];
 	int sn = src->n;
@@ -2718,7 +2818,7 @@ icc_base_conv_pixmap(fz_context *ctx, fz_pixmap *dst, fz_pixmap *src, fz_colorsp
 	int stride_base;
 	int bn, bc;
 
-	base = fz_new_pixmap_with_bbox(ctx, base_cs, fz_pixmap_bbox(ctx, src, &bbox), src->seps, src->alpha);
+	base = fz_new_pixmap_with_bbox(ctx, base_cs, fz_pixmap_bbox(ctx, src), src->seps, src->alpha);
 	bn = base->n;
 	bc = base->n - base->alpha - base->s;
 	stride_base = base->stride - base->w * bn;
@@ -3004,10 +3104,10 @@ static void fast_any_to_alpha(fz_context *ctx, fz_pixmap *dst, fz_pixmap *src, f
 	}
 }
 
-/* Used for testing all color managed source color spaces.  If it is icc, cal or
+/* Used for testing all color managed color spaces.  If it is icc, cal or
  * has a base space that is managed */
 static const fz_colorspace *
-fz_source_colorspace_cm(fz_context *ctx, const fz_colorspace *cs)
+fz_colorspace_cm(fz_context *ctx, const fz_colorspace *cs)
 {
 	while (cs)
 	{
@@ -3063,8 +3163,8 @@ fz_pixmap_converter *fz_lookup_pixmap_converter(fz_context *ctx, fz_colorspace *
 	}
 	else
 	{
-		const fz_colorspace *ss_base = fz_source_colorspace_cm(ctx, ss);
-		if (ss_base != NULL && fz_colorspace_is_icc(ctx, ds))
+		const fz_colorspace *ss_base = fz_colorspace_cm(ctx, ss);
+		if (ss_base != NULL && fz_colorspace_cm(ctx, ds))
 		{
 			if (ss_base == ss)
 				return icc_conv_pixmap;
@@ -3328,16 +3428,17 @@ void fz_find_color_converter(fz_context *ctx, fz_color_converter *cc, const fz_c
 	}
 	else
 	{
-		const fz_colorspace *ss_base = fz_source_colorspace_cm(ctx, ss);
-		if (ss_base != NULL && fz_colorspace_is_icc(ctx, ds))
+		const fz_colorspace *ss_base = fz_colorspace_cm(ctx, ss);
+		if (ss_base != NULL && fz_colorspace_cm(ctx, ds))
 		{
 			if (ss_base == ss)
 				cc->convert = icc_conv_color;
 			else
 				cc->convert = icc_base_conv_color;
 
-			/* Special case. Do not set link if we are doing DeviceGray to CMYK */
-			if (!(fz_colorspace_is_device_gray(ctx, ss_base) && fz_colorspace_is_subtractive(ctx, ds)))
+			/* Special case: Do not set link if we are doing DeviceGray to CMYK. */
+			/* Handle DeviceGray to CMYK as K only. See note in Section 6.3 of PDF spec 1.7. */
+			if (!(fz_colorspace_is_device_gray(ctx, ss_base) && fz_colorspace_is_cmyk(ctx, ds)))
 				cc->link = fz_get_icc_link(ctx, ds, 0, ss_base, 0, is, params, 2, 0, &cc->n);
 		}
 		else
@@ -3421,11 +3522,6 @@ clamp_indexed(const fz_colorspace *cs, const float *in, float *out)
 	*out = fz_clamp(*in, 0, idx->high) / 255.0f; /* To do, avoid 255 divide */
 }
 
-int fz_colorspace_is_indexed(fz_context *ctx, const fz_colorspace *cs)
-{
-	return cs && cs->clamp == clamp_indexed;
-}
-
 fz_colorspace *
 fz_new_indexed_colorspace(fz_context *ctx, fz_colorspace *base, int high, unsigned char *lookup)
 {
@@ -3438,7 +3534,7 @@ fz_new_indexed_colorspace(fz_context *ctx, fz_colorspace *base, int high, unsign
 	idx->high = high;
 
 	fz_try(ctx)
-		cs = fz_new_colorspace(ctx, "Indexed", 1, 0, fz_colorspace_is_icc(ctx, fz_device_rgb(ctx)) ? indexed_to_alt : indexed_to_rgb, NULL, base_indexed, clamp_indexed, free_indexed, idx, sizeof(*idx) + (base->n * (idx->high + 1)) + base->size);
+		cs = fz_new_colorspace(ctx, "Indexed", FZ_COLORSPACE_INDEXED, 0, 1, fz_colorspace_is_icc(ctx, fz_device_rgb(ctx)) ? indexed_to_alt : indexed_to_rgb, NULL, base_indexed, clamp_indexed, free_indexed, idx, sizeof(*idx) + (base->n * (idx->high + 1)) + base->size);
 	fz_catch(ctx)
 	{
 		fz_free(ctx, idx);
@@ -3466,7 +3562,6 @@ fz_expand_indexed_pixmap(fz_context *ctx, const fz_pixmap *src, int alpha)
 	unsigned char *d;
 	int y, x, k, n, high;
 	unsigned char *lookup;
-	fz_irect bbox;
 	int s_line_inc, d_line_inc;
 
 	assert(src->colorspace->to_ccs == indexed_to_rgb || src->colorspace->to_ccs == indexed_to_alt);
@@ -3477,7 +3572,7 @@ fz_expand_indexed_pixmap(fz_context *ctx, const fz_pixmap *src, int alpha)
 	lookup = idx->lookup;
 	n = idx->base->n;
 
-	dst = fz_new_pixmap_with_bbox(ctx, idx->base, fz_pixmap_bbox(ctx, src, &bbox), src->seps, alpha);
+	dst = fz_new_pixmap_with_bbox(ctx, idx->base, fz_pixmap_bbox(ctx, src), src->seps, alpha);
 	s = src->samples;
 	d = dst->samples;
 	s_line_inc = src->stride - src->w * src->n;
@@ -3578,6 +3673,7 @@ void fz_init_cached_color_converter(fz_context *ctx, fz_color_converter *cc, fz_
 		fz_drop_color_converter(ctx, &cached->base);
 		fz_drop_hash_table(ctx, cached->hash);
 		fz_free(ctx, cached);
+		cc->opaque = NULL;
 		fz_rethrow(ctx);
 	}
 }
@@ -3640,38 +3736,29 @@ clamp_default_icc(const fz_colorspace *cs, const float *src, float *dst)
 		dst[i] = fz_clamp(src[i], 0, 1);
 }
 
-int fz_colorspace_is_icc(fz_context *ctx, const fz_colorspace *cs)
+static const char *colorspace_name_from_type(int type)
 {
-	return cs && cs->free_data == free_icc;
-}
-
-int fz_colorspace_is_lab_icc(fz_context *ctx, const fz_colorspace *cs)
-{
-	return cs && cs->clamp == clamp_lab_icc;
-}
-
-void fz_set_icc_bgr(fz_context *ctx, fz_colorspace *cs)
-{
-	fz_iccprofile *profile;
-
-	if (cs == NULL || !fz_colorspace_is_icc(ctx, cs))
-		return;
-
-	profile = cs->data;
-	profile->bgr = 1;
-	return;
+	switch (type) {
+	default: return "Unknown";
+	case FZ_COLORSPACE_GRAY: return "Gray";
+	case FZ_COLORSPACE_RGB: return "RGB";
+	case FZ_COLORSPACE_BGR: return "BGR";
+	case FZ_COLORSPACE_CMYK: return "CMYK";
+	case FZ_COLORSPACE_LAB: return "Lab";
+	}
 }
 
 fz_colorspace *
-fz_new_icc_colorspace(fz_context *ctx, const char *name, int num, fz_buffer *buf)
+fz_new_icc_colorspace(fz_context *ctx, enum fz_colorspace_type type, fz_buffer *buf)
 {
 #ifdef NO_ICC
 	fz_throw(ctx, FZ_ERROR_GENERIC, "ICC Profiles not supported in NO_ICC build");
 #else
 	fz_colorspace *cs = NULL;
 	fz_iccprofile *profile;
-	int is_lab = 0;
-	int flags = 0;
+	int flags = FZ_COLORSPACE_IS_ICC;
+	const char *name;
+	int num;
 
 	profile = fz_malloc_struct(ctx, fz_iccprofile);
 	fz_try(ctx)
@@ -3680,12 +3767,9 @@ fz_new_icc_colorspace(fz_context *ctx, const char *name, int num, fz_buffer *buf
 		{
 			size_t size;
 			const unsigned char *data;
-			data = fz_lookup_icc(ctx, name, &size);
+			data = fz_lookup_icc(ctx, type, &size);
 			profile->buffer = fz_new_buffer_from_shared_data(ctx, data, size);
-			is_lab = (strcmp(name, FZ_ICC_PROFILE_LAB) == 0);
-			if (strcmp(name, FZ_ICC_PROFILE_GRAY) == 0)
-				flags = FZ_CS_DEVICE_GRAY;
-			profile->bgr = (strcmp(name, FZ_ICC_PROFILE_BGR) == 0);
+			flags |= FZ_COLORSPACE_IS_DEVICE;
 		}
 		else
 		{
@@ -3694,38 +3778,71 @@ fz_new_icc_colorspace(fz_context *ctx, const char *name, int num, fz_buffer *buf
 
 		fz_cmm_init_profile(ctx, profile);
 
-		/* Check if correct type, if a particular type was expected */
-		if (num != 0 && num != profile->num_devcomp)
+		if (type == FZ_COLORSPACE_NONE)
 		{
-			fz_drop_buffer(ctx, profile->buffer);
-			fz_cmm_fin_profile(ctx, profile);
-			fz_free(ctx, profile);
-			break;
+			switch (profile->num_devcomp)
+			{
+			default: type = FZ_COLORSPACE_SEPARATION; break;
+			case 1: type = FZ_COLORSPACE_GRAY; break;
+			case 3: type = FZ_COLORSPACE_RGB; break;
+			case 4: type = FZ_COLORSPACE_CMYK; break;
+			}
 		}
 
-		fz_md5_icc(ctx, profile);
-		if (profile->num_devcomp == 4)
-			flags |= FZ_CS_SUBTRACTIVE;
-		cs = fz_new_colorspace(ctx, name, profile->num_devcomp, flags, NULL, NULL, NULL, is_lab ? clamp_lab_icc : clamp_default_icc, free_icc, profile, sizeof(profile));
+		profile->bgr = (type == FZ_COLORSPACE_BGR);
 
-		switch (profile->num_devcomp)
+		switch (type)
 		{
-		case 1:
+		default: num = profile->num_devcomp; break;
+		case FZ_COLORSPACE_GRAY: num = 1; break;
+		case FZ_COLORSPACE_RGB: num = 3; break;
+		case FZ_COLORSPACE_BGR: num = 3; break;
+		case FZ_COLORSPACE_LAB: num = 3; break;
+		case FZ_COLORSPACE_CMYK: num = 4; break;
+		}
+
+		/* Check if correct type, if a particular type was expected */
+		if (num != profile->num_devcomp)
+			fz_throw(ctx, FZ_ERROR_GENERIC, "ICC profile did not match expected colorspace type");
+
+		fz_md5_icc(ctx, profile);
+
+		if (profile->desc)
+			name = profile->desc;
+		else
+			name = colorspace_name_from_type(type);
+
+		cs = fz_new_colorspace(ctx, name, type, flags, profile->num_devcomp,
+			NULL,
+			NULL,
+			NULL,
+			(type == FZ_COLORSPACE_LAB) ? clamp_lab_icc : clamp_default_icc,
+			free_icc,
+			profile, sizeof(*profile));
+
+		switch (type)
+		{
+		default:
+			break;
+		case FZ_COLORSPACE_GRAY:
 			fz_colorspace_name_colorant(ctx, cs, 0, "Gray");
 			break;
-		case 3:
-			if (is_lab)
-			{
-				fz_colorspace_name_colorant(ctx, cs, 0, "L*");
-				fz_colorspace_name_colorant(ctx, cs, 1, "a*");
-				fz_colorspace_name_colorant(ctx, cs, 2, "b*");
-			} else {
-				fz_colorspace_name_colorant(ctx, cs, profile->bgr ? 2 : 0, "Red");
-				fz_colorspace_name_colorant(ctx, cs, 1, "Green");
-				fz_colorspace_name_colorant(ctx, cs, profile->bgr ? 0 : 2, "Blue");
-			}
+		case FZ_COLORSPACE_LAB:
+			fz_colorspace_name_colorant(ctx, cs, 0, "L*");
+			fz_colorspace_name_colorant(ctx, cs, 1, "a*");
+			fz_colorspace_name_colorant(ctx, cs, 2, "b*");
 			break;
-		case 4:
+		case FZ_COLORSPACE_RGB:
+			fz_colorspace_name_colorant(ctx, cs, 0, "Red");
+			fz_colorspace_name_colorant(ctx, cs, 1, "Green");
+			fz_colorspace_name_colorant(ctx, cs, 2, "Blue");
+			break;
+		case FZ_COLORSPACE_BGR:
+			fz_colorspace_name_colorant(ctx, cs, 2, "Red");
+			fz_colorspace_name_colorant(ctx, cs, 1, "Green");
+			fz_colorspace_name_colorant(ctx, cs, 0, "Blue");
+			break;
+		case FZ_COLORSPACE_CMYK:
 			fz_colorspace_name_colorant(ctx, cs, 0, "Cyan");
 			fz_colorspace_name_colorant(ctx, cs, 1, "Magenta");
 			fz_colorspace_name_colorant(ctx, cs, 2, "Yellow");
@@ -3743,12 +3860,12 @@ fz_new_icc_colorspace(fz_context *ctx, const char *name, int num, fz_buffer *buf
 #endif
 }
 
-fz_colorspace *fz_new_icc_colorspace_from_file(fz_context *ctx, const char *name, const char *path)
+fz_colorspace *fz_new_icc_colorspace_from_file(fz_context *ctx, enum fz_colorspace_type type, const char *path)
 {
 	fz_colorspace *cs = NULL;
 	fz_buffer *buffer = fz_read_file(ctx, path);
 	fz_try(ctx)
-		cs = fz_new_icc_colorspace(ctx, name, 0, buffer);
+		cs = fz_new_icc_colorspace(ctx, type, buffer);
 	fz_always(ctx)
 		fz_drop_buffer(ctx, buffer);
 	fz_catch(ctx)
@@ -3756,12 +3873,12 @@ fz_colorspace *fz_new_icc_colorspace_from_file(fz_context *ctx, const char *name
 	return cs;
 }
 
-fz_colorspace *fz_new_icc_colorspace_from_stream(fz_context *ctx, const char *name, fz_stream *in)
+fz_colorspace *fz_new_icc_colorspace_from_stream(fz_context *ctx, enum fz_colorspace_type type, fz_stream *in)
 {
 	fz_colorspace *cs = NULL;
 	fz_buffer *buffer = fz_read_all(ctx, in, 1024);
 	fz_try(ctx)
-		cs = fz_new_icc_colorspace(ctx, name, 0, buffer);
+		cs = fz_new_icc_colorspace(ctx, type, buffer);
 	fz_always(ctx)
 		fz_drop_buffer(ctx, buffer);
 	fz_catch(ctx)
@@ -3798,19 +3915,27 @@ free_cal(fz_context *ctx, fz_colorspace *cs)
 	fz_free(ctx, cal_data);
 }
 
-int fz_colorspace_is_cal(fz_context *ctx, const fz_colorspace *cs)
-{
-	return cs && cs->free_data == free_cal;
-}
-
 /* Profile created if needed during draw command. */
 fz_colorspace *
 fz_new_cal_colorspace(fz_context *ctx, const char *name, float *wp, float *bp, float *gamma, float *matrix)
 {
 	fz_colorspace *cs = NULL;
-	int num = (matrix == NULL ? 1 : 3);
-	fz_cal_colorspace *cal_data = fz_malloc_struct(ctx, fz_cal_colorspace);
+	enum fz_colorspace_type type;
+	int num;
+	fz_cal_colorspace *cal_data;
 
+	if (matrix)
+	{
+		type = FZ_COLORSPACE_RGB;
+		num = 3;
+	}
+	else
+	{
+		type = FZ_COLORSPACE_GRAY;
+		num = 1;
+	}
+
+	cal_data = fz_malloc_struct(ctx, fz_cal_colorspace);
 	memcpy(&cal_data->bp, bp, sizeof(float) * 3);
 	memcpy(&cal_data->wp, wp, sizeof(float) * 3);
 	memcpy(&cal_data->gamma, gamma, sizeof(float) * num);
@@ -3819,7 +3944,7 @@ fz_new_cal_colorspace(fz_context *ctx, const char *name, float *wp, float *bp, f
 	cal_data->n = num;
 
 	fz_try(ctx)
-		cs = fz_new_colorspace(ctx, "pdf-cal", num, 0, NULL, NULL, NULL, NULL, free_cal, cal_data, sizeof(cal_data));
+		cs = fz_new_colorspace(ctx, name, type, FZ_COLORSPACE_IS_CAL, num, NULL, NULL, NULL, NULL, free_cal, cal_data, sizeof(cal_data));
 	fz_catch(ctx)
 	{
 		fz_free(ctx, cal_data);
@@ -3953,10 +4078,13 @@ fz_clone_default_colorspaces(fz_context *ctx, fz_default_colorspaces *base)
 {
 	fz_default_colorspaces *default_cs = fz_malloc_struct(ctx, fz_default_colorspaces);
 	default_cs->refs = 1;
-	default_cs->gray = fz_keep_colorspace(ctx, base->gray);
-	default_cs->rgb = fz_keep_colorspace(ctx, base->rgb);
-	default_cs->cmyk = fz_keep_colorspace(ctx, base->cmyk);
-	default_cs->oi = fz_keep_colorspace(ctx, base->oi);
+	if (base)
+	{
+		default_cs->gray = fz_keep_colorspace(ctx, base->gray);
+		default_cs->rgb = fz_keep_colorspace(ctx, base->rgb);
+		default_cs->cmyk = fz_keep_colorspace(ctx, base->cmyk);
+		default_cs->oi = fz_keep_colorspace(ctx, base->oi);
+	}
 	return default_cs;
 }
 
@@ -3993,7 +4121,7 @@ void fz_colorspace_name_colorant(fz_context *ctx, fz_colorspace *cs, int i, cons
 	{
 		cs->colorant[i] = fz_strdup(ctx, name);
 
-		if (cs->flags & FZ_CS_DEVICE_N)
+		if (cs->type == FZ_COLORSPACE_SEPARATION)
 		{
 			if (i == 0)
 			{
@@ -4028,24 +4156,4 @@ const char *fz_colorspace_colorant(fz_context *ctx, const fz_colorspace *cs, int
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Colorant out of range");
 
 	return cs->colorant[i];
-}
-
-int fz_colorspace_is_device_n(fz_context *ctx, const fz_colorspace *cs)
-{
-	return (cs && !!(cs->flags & FZ_CS_DEVICE_N));
-}
-
-int fz_colorspace_device_n_has_only_cmyk(fz_context *ctx, const fz_colorspace *cs)
-{
-	return (cs == NULL ? 0 : ((cs->flags & FZ_CS_HAS_CMYK_AND_SPOTS) == FZ_CS_HAS_CMYK));
-}
-
-int fz_colorspace_device_n_has_cmyk(fz_context *ctx, const fz_colorspace *cs)
-{
-	return (cs == NULL ? 0 : !!(cs->flags & FZ_CS_HAS_CMYK));
-}
-
-int fz_colorspace_is_device_gray(fz_context *ctx, const fz_colorspace *cs)
-{
-	return (cs == NULL ? 0 : !!(cs->flags & FZ_CS_DEVICE_GRAY));
 }

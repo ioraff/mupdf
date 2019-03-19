@@ -22,14 +22,14 @@ static void usage(void)
 
 static int isimage(pdf_obj *obj)
 {
-	pdf_obj *type = pdf_dict_get(ctx, obj, PDF_NAME_Subtype);
-	return pdf_name_eq(ctx, type, PDF_NAME_Image);
+	pdf_obj *type = pdf_dict_get(ctx, obj, PDF_NAME(Subtype));
+	return pdf_name_eq(ctx, type, PDF_NAME(Image));
 }
 
 static int isfontdesc(pdf_obj *obj)
 {
-	pdf_obj *type = pdf_dict_get(ctx, obj, PDF_NAME_Type);
-	return pdf_name_eq(ctx, type, PDF_NAME_FontDescriptor);
+	pdf_obj *type = pdf_dict_get(ctx, obj, PDF_NAME(Type));
+	return pdf_name_eq(ctx, type, PDF_NAME(FontDescriptor));
 }
 
 static void writepixmap(fz_context *ctx, fz_pixmap *pix, char *file, int dorgb)
@@ -73,6 +73,7 @@ writejpeg(fz_context *ctx, const unsigned char *data, size_t len, const char *fi
 	out = fz_new_output_with_path(ctx, buf, 0);
 	fz_try(ctx)
 	{
+		printf("extracting image %s\n", buf);
 		fz_write_data(ctx, out, data, len);
 		fz_close_output(ctx, out);
 	}
@@ -82,16 +83,13 @@ writejpeg(fz_context *ctx, const unsigned char *data, size_t len, const char *fi
 		fz_rethrow(ctx);
 }
 
-static void saveimage(int num)
+static void saveimage(pdf_obj *ref)
 {
 	fz_image *image = NULL;
 	fz_pixmap *pix = NULL;
-	pdf_obj *ref;
 	char buf[32];
 	fz_compressed_buffer *cbuf;
 	int type;
-
-	ref = pdf_new_indirect(ctx, doc, num, 0);
 
 	fz_var(image);
 	fz_var(pix);
@@ -100,25 +98,30 @@ static void saveimage(int num)
 	{
 		image = pdf_load_image(ctx, doc, ref);
 		cbuf = fz_compressed_image_buffer(ctx, image);
-		fz_snprintf(buf, sizeof(buf), "img-%04d", num);
+		fz_snprintf(buf, sizeof(buf), "img-%04d", pdf_to_num(ctx, ref));
 		type = cbuf == NULL ? FZ_IMAGE_UNKNOWN : cbuf->params.type;
+
 		if (image->use_colorkey)
 			type = FZ_IMAGE_UNKNOWN;
 		if (image->use_decode)
 			type = FZ_IMAGE_UNKNOWN;
 		if (image->mask)
 			type = FZ_IMAGE_UNKNOWN;
-		switch (type)
+		if (dorgb)
 		{
-		case FZ_IMAGE_JPEG:
+			enum fz_colorspace_type ctype = fz_colorspace_type(ctx, image->colorspace);
+			if (ctype != FZ_COLORSPACE_RGB && ctype != FZ_COLORSPACE_GRAY)
+				type = FZ_IMAGE_UNKNOWN;
+		}
+
+		if (type == FZ_IMAGE_JPEG)
 		{
 			unsigned char *data;
 			size_t len = fz_buffer_storage(ctx, cbuf->buffer, &data);
-			fz_snprintf(buf, sizeof(buf), "img-%04d", num);
 			writejpeg(ctx, data, len, buf);
-			break;
 		}
-		default:
+		else
+		{
 			pix = fz_get_pixmap_from_image(ctx, image, NULL, NULL, 0, 0);
 			writepixmap(ctx, pix, buf, dorgb);
 		}
@@ -127,13 +130,12 @@ static void saveimage(int num)
 	{
 		fz_drop_image(ctx, image);
 		fz_drop_pixmap(ctx, pix);
-		pdf_drop_obj(ctx, ref);
 	}
 	fz_catch(ctx)
 		fz_rethrow(ctx);
 }
 
-static void savefont(pdf_obj *dict, int num)
+static void savefont(pdf_obj *dict)
 {
 	char namebuf[1024];
 	fz_buffer *buf;
@@ -145,38 +147,38 @@ static void savefont(pdf_obj *dict, int num)
 	size_t len;
 	unsigned char *data;
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_FontName);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(FontName));
 	if (obj)
 		fontname = pdf_to_name(ctx, obj);
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_FontFile);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(FontFile));
 	if (obj)
 	{
 		stream = obj;
 		ext = "pfa";
 	}
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_FontFile2);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(FontFile2));
 	if (obj)
 	{
 		stream = obj;
 		ext = "ttf";
 	}
 
-	obj = pdf_dict_get(ctx, dict, PDF_NAME_FontFile3);
+	obj = pdf_dict_get(ctx, dict, PDF_NAME(FontFile3));
 	if (obj)
 	{
 		stream = obj;
 
-		obj = pdf_dict_get(ctx, obj, PDF_NAME_Subtype);
+		obj = pdf_dict_get(ctx, obj, PDF_NAME(Subtype));
 		if (obj && !pdf_is_name(ctx, obj))
 			fz_throw(ctx, FZ_ERROR_GENERIC, "invalid font descriptor subtype");
 
-		if (pdf_name_eq(ctx, obj, PDF_NAME_Type1C))
+		if (pdf_name_eq(ctx, obj, PDF_NAME(Type1C)))
 			ext = "cff";
-		else if (pdf_name_eq(ctx, obj, PDF_NAME_CIDFontType0C))
+		else if (pdf_name_eq(ctx, obj, PDF_NAME(CIDFontType0C)))
 			ext = "cid";
-		else if (pdf_name_eq(ctx, obj, PDF_NAME_OpenType))
+		else if (pdf_name_eq(ctx, obj, PDF_NAME(OpenType)))
 			ext = "otf";
 		else
 			fz_throw(ctx, FZ_ERROR_GENERIC, "unhandled font type '%s'", pdf_to_name(ctx, obj));
@@ -192,7 +194,7 @@ static void savefont(pdf_obj *dict, int num)
 	len = fz_buffer_storage(ctx, buf, &data);
 	fz_try(ctx)
 	{
-		fz_snprintf(namebuf, sizeof(namebuf), "%s-%04d.%s", fontname, num, ext);
+		fz_snprintf(namebuf, sizeof(namebuf), "%s-%04d.%s", fontname, pdf_to_num(ctx, dict), ext);
 		printf("extracting font %s\n", namebuf);
 		out = fz_new_output_with_path(ctx, namebuf, 0);
 		fz_try(ctx)
@@ -211,23 +213,23 @@ static void savefont(pdf_obj *dict, int num)
 		fz_rethrow(ctx);
 }
 
-static void showobject(int num)
+static void extractobject(int num)
 {
-	pdf_obj *obj;
+	pdf_obj *ref;
 
 	if (!doc)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "no file specified");
 
 	fz_try(ctx)
 	{
-		obj = pdf_load_object(ctx, doc, num);
+		ref = pdf_new_indirect(ctx, doc, num, 0);
 
-		if (isimage(obj))
-			saveimage(num);
-		else if (isfontdesc(obj))
-			savefont(obj, num);
+		if (isimage(ref))
+			saveimage(ref);
+		if (isfontdesc(ref))
+			savefont(ref);
 
-		pdf_drop_obj(ctx, obj);
+		pdf_drop_obj(ctx, ref);
 	}
 	fz_catch(ctx)
 	{
@@ -272,13 +274,13 @@ int pdfextract_main(int argc, char **argv)
 	{
 		int len = pdf_count_objects(ctx, doc);
 		for (o = 1; o < len; o++)
-			showobject(o);
+			extractobject(o);
 	}
 	else
 	{
 		while (fz_optind < argc)
 		{
-			showobject(atoi(argv[fz_optind]));
+			extractobject(atoi(argv[fz_optind]));
 			fz_optind++;
 		}
 	}

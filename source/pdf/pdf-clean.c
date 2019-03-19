@@ -2,7 +2,9 @@
 #include "mupdf/pdf.h"
 
 static void
-pdf_clean_stream_object(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_res, fz_cookie *cookie, int own_res, int ascii, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg)
+pdf_clean_stream_object(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_res, fz_cookie *cookie, int own_res,
+		pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg,
+		int sanitize, int ascii)
 {
 	pdf_processor *proc_buffer = NULL;
 	pdf_processor *proc_filter = NULL;
@@ -23,7 +25,7 @@ pdf_clean_stream_object(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_ob
 	{
 		if (own_res)
 		{
-			pdf_obj *r = pdf_dict_get(ctx, obj, PDF_NAME_Resources);
+			pdf_obj *r = pdf_dict_get(ctx, obj, PDF_NAME(Resources));
 			if (r)
 				orig_res = r;
 		}
@@ -42,7 +44,7 @@ pdf_clean_stream_object(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_ob
 		if (own_res)
 		{
 			ref = pdf_add_object(ctx, doc, res);
-			pdf_dict_put_drop(ctx, obj, PDF_NAME_Resources, ref);
+			pdf_dict_put_drop(ctx, obj, PDF_NAME(Resources), ref);
 		}
 	}
 	fz_always(ctx)
@@ -59,7 +61,7 @@ pdf_clean_stream_object(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_ob
 }
 
 static void
-pdf_clean_type3(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_res, fz_cookie *cookie, int ascii)
+pdf_clean_type3(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_res, fz_cookie *cookie, int sanitize, int ascii)
 {
 	pdf_processor *proc_buffer = NULL;
 	pdf_processor *proc_filter = NULL;
@@ -74,14 +76,14 @@ pdf_clean_type3(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_
 
 	fz_try(ctx)
 	{
-		res = pdf_dict_get(ctx, obj, PDF_NAME_Resources);
+		res = pdf_dict_get(ctx, obj, PDF_NAME(Resources));
 		if (res)
 			orig_res = res;
 		res = NULL;
 
 		res = pdf_new_dict(ctx, doc, 1);
 
-		charprocs = pdf_dict_get(ctx, obj, PDF_NAME_CharProcs);
+		charprocs = pdf_dict_get(ctx, obj, PDF_NAME(CharProcs));
 		l = pdf_dict_len(ctx, charprocs);
 
 		for (i = 0; i < l; i++)
@@ -91,10 +93,16 @@ pdf_clean_type3(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_
 			fz_try(ctx)
 			{
 				proc_buffer = pdf_new_buffer_processor(ctx, buffer, ascii);
-				proc_filter = pdf_new_filter_processor(ctx, doc, proc_buffer, orig_res, res);
-
-				pdf_process_contents(ctx, proc_filter, doc, orig_res, val, cookie);
-				pdf_close_processor(ctx, proc_filter);
+				if (sanitize)
+				{
+					proc_filter = pdf_new_filter_processor(ctx, doc, proc_buffer, orig_res, res);
+					pdf_process_contents(ctx, proc_filter, doc, orig_res, val, cookie);
+					pdf_close_processor(ctx, proc_filter);
+				}
+				else
+				{
+					pdf_process_contents(ctx, proc_filter, doc, orig_res, val, cookie);
+				}
 				pdf_close_processor(ctx, proc_buffer);
 
 				pdf_update_stream(ctx, doc, val, buffer, 0);
@@ -112,10 +120,10 @@ pdf_clean_type3(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_
 		}
 
 		/* ProcSet - no cleaning possible. Inherit this from the old dict. */
-		pdf_dict_put(ctx, res, PDF_NAME_ProcSet, pdf_dict_get(ctx, orig_res, PDF_NAME_ProcSet));
+		pdf_dict_put(ctx, res, PDF_NAME(ProcSet), pdf_dict_get(ctx, orig_res, PDF_NAME(ProcSet)));
 
 		ref = pdf_add_object(ctx, doc, res);
-		pdf_dict_put_drop(ctx, obj, PDF_NAME_Resources, ref);
+		pdf_dict_put_drop(ctx, obj, PDF_NAME(Resources), ref);
 	}
 	fz_always(ctx)
 	{
@@ -127,18 +135,19 @@ pdf_clean_type3(fz_context *ctx, pdf_document *doc, pdf_obj *obj, pdf_obj *orig_
 	}
 }
 
-void pdf_clean_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_cookie *cookie, pdf_page_contents_process_fn *proc_fn, void *arg, int ascii)
+void pdf_clean_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_cookie *cookie, pdf_page_contents_process_fn *proc_fn, void *arg, int sanitize, int ascii)
 {
-	pdf_filter_page_contents(ctx, doc, page, cookie, proc_fn, NULL, NULL, arg, ascii);
+	pdf_filter_page_contents(ctx, doc, page, cookie, proc_fn, NULL, NULL, arg, sanitize, ascii);
 }
 
-void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_cookie *cookie, pdf_page_contents_process_fn *proc_fn, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *proc_arg, int ascii)
+void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_cookie *cookie,
+		pdf_page_contents_process_fn *proc_fn, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *proc_arg,
+		int sanitize, int ascii)
 {
 	pdf_processor *proc_buffer = NULL;
 	pdf_processor *proc_filter = NULL;
 	pdf_obj *new_obj = NULL;
 	pdf_obj *new_ref = NULL;
-	pdf_obj *res_ref = NULL;
 	pdf_obj *res = NULL;
 	pdf_obj *obj;
 	pdf_obj *contents;
@@ -148,7 +157,6 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 	fz_var(new_obj);
 	fz_var(new_ref);
 	fz_var(res);
-	fz_var(res_ref);
 	fz_var(proc_buffer);
 	fz_var(proc_filter);
 
@@ -156,16 +164,22 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 
 	fz_try(ctx)
 	{
-		res = pdf_new_dict(ctx, doc, 1);
-
 		contents = pdf_page_contents(ctx, page);
 		resources = pdf_page_resources(ctx, page);
 
 		proc_buffer = pdf_new_buffer_processor(ctx, buffer, ascii);
-		proc_filter = pdf_new_filter_processor_with_text_filter(ctx, doc, proc_buffer, resources, res, text_filter, after_text, proc_arg);
-
-		pdf_process_contents(ctx, proc_filter, doc, resources, contents, cookie);
-		pdf_close_processor(ctx, proc_filter);
+		if (sanitize)
+		{
+			res = pdf_new_dict(ctx, doc, 1);
+			proc_filter = pdf_new_filter_processor_with_text_filter(ctx, doc, proc_buffer, resources, res, text_filter, after_text, proc_arg);
+			pdf_process_contents(ctx, proc_filter, doc, resources, contents, cookie);
+			pdf_close_processor(ctx, proc_filter);
+		}
+		else
+		{
+			res = pdf_keep_obj(ctx, resources);
+			pdf_process_contents(ctx, proc_buffer, doc, resources, contents, cookie);
+		}
 		pdf_close_processor(ctx, proc_buffer);
 
 		/* Deal with page content stream. */
@@ -176,12 +190,12 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 			new_obj = pdf_new_dict(ctx, doc, 1);
 			new_ref = pdf_add_object(ctx, doc, new_obj);
 			contents = new_ref;
-			pdf_dict_put(ctx, page->obj, PDF_NAME_Contents, contents);
+			pdf_dict_put(ctx, page->obj, PDF_NAME(Contents), contents);
 		}
 		else
 		{
-			pdf_dict_del(ctx, contents, PDF_NAME_Filter);
-			pdf_dict_del(ctx, contents, PDF_NAME_DecodeParms);
+			pdf_dict_del(ctx, contents, PDF_NAME(Filter));
+			pdf_dict_del(ctx, contents, PDF_NAME(DecodeParms));
 		}
 
 		pdf_update_stream(ctx, doc, contents, buffer, 0);
@@ -192,7 +206,7 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 		 * conceivably cause changes in rendering, but we don't care. */
 
 		/* ExtGState */
-		obj = pdf_dict_get(ctx, res, PDF_NAME_ExtGState);
+		obj = pdf_dict_get(ctx, res, PDF_NAME(ExtGState));
 		if (obj)
 		{
 			int i, l;
@@ -200,51 +214,59 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 			l = pdf_dict_len(ctx, obj);
 			for (i = 0; i < l; i++)
 			{
-				pdf_obj *o = pdf_dict_get(ctx, pdf_dict_get_val(ctx, obj, i), PDF_NAME_SMask);
+				pdf_obj *o = pdf_dict_get(ctx, pdf_dict_get_val(ctx, obj, i), PDF_NAME(SMask));
 				if (!o)
 					continue;
-				o = pdf_dict_get(ctx, o, PDF_NAME_G);
+				o = pdf_dict_get(ctx, o, PDF_NAME(G));
 				if (!o)
 					continue;
 				/* Transparency group XObject */
-				pdf_clean_stream_object(ctx, doc, o, resources, cookie, 1, ascii, text_filter, after_text, proc_arg);
+				pdf_clean_stream_object(ctx, doc, o, resources, cookie, 1, text_filter, after_text, proc_arg, sanitize, ascii);
 			}
 		}
 
 		/* Pattern */
-		obj = pdf_dict_get(ctx, res, PDF_NAME_Pattern);
+		obj = pdf_dict_get(ctx, res, PDF_NAME(Pattern));
 		if (obj)
 		{
 			int i, l;
 			l = pdf_dict_len(ctx, obj);
 			for (i = 0; i < l; i++)
 			{
+				pdf_obj *pat_res;
 				pdf_obj *pat = pdf_dict_get_val(ctx, obj, i);
 				if (!pat)
 					continue;
-				if (pdf_to_int(ctx, pdf_dict_get(ctx, pat, PDF_NAME_PatternType)) == 1)
-					pdf_clean_stream_object(ctx, doc, pat, resources, cookie, 0, ascii, text_filter, after_text, proc_arg);
+				pat_res = pdf_dict_get(ctx, pat, PDF_NAME(Resources));
+				if (pat_res == NULL)
+					pat_res = resources;
+				if (pdf_dict_get_int(ctx, pat, PDF_NAME(PatternType)) == 1)
+					pdf_clean_stream_object(ctx, doc, pat, pat_res, cookie, 0, text_filter, after_text, proc_arg, sanitize, ascii);
 			}
 		}
 
 		/* XObject */
-		obj = pdf_dict_get(ctx, res, PDF_NAME_XObject);
+		obj = pdf_dict_get(ctx, res, PDF_NAME(XObject));
 		if (obj)
 		{
 			int i, l;
 			l = pdf_dict_len(ctx, obj);
 			for (i = 0; i < l; i++)
 			{
+				pdf_obj *xobj_res;
 				pdf_obj *xobj = pdf_dict_get_val(ctx, obj, i);
 				if (!xobj)
 					continue;
-				if (pdf_name_eq(ctx, PDF_NAME_Form, pdf_dict_get(ctx, xobj, PDF_NAME_Subtype)))
-					pdf_clean_stream_object(ctx, doc, xobj, resources, cookie, 1, ascii, text_filter, after_text, proc_arg);
+				xobj_res = pdf_dict_get(ctx, xobj, PDF_NAME(Resources));
+				if (xobj_res == NULL)
+					xobj_res = resources;
+				if (pdf_name_eq(ctx, PDF_NAME(Form), pdf_dict_get(ctx, xobj, PDF_NAME(Subtype))))
+					pdf_clean_stream_object(ctx, doc, xobj, xobj_res, cookie, 1, text_filter, after_text, proc_arg, sanitize, ascii);
 			}
 		}
 
 		/* Font */
-		obj = pdf_dict_get(ctx, res, PDF_NAME_Font);
+		obj = pdf_dict_get(ctx, res, PDF_NAME(Font));
 		if (obj)
 		{
 			int i, l;
@@ -254,15 +276,15 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 				pdf_obj *o = pdf_dict_get_val(ctx, obj, i);
 				if (!o)
 					continue;
-				if (pdf_name_eq(ctx, PDF_NAME_Type3, pdf_dict_get(ctx, o, PDF_NAME_Subtype)))
-					pdf_clean_type3(ctx, doc, o, resources, cookie, ascii);
+				if (pdf_name_eq(ctx, PDF_NAME(Type3), pdf_dict_get(ctx, o, PDF_NAME(Subtype))))
+					pdf_clean_type3(ctx, doc, o, resources, cookie, sanitize, ascii);
 			}
 		}
 
 		/* ProcSet - no cleaning possible. Inherit this from the old dict. */
-		obj = pdf_dict_get(ctx, resources, PDF_NAME_ProcSet);
+		obj = pdf_dict_get(ctx, resources, PDF_NAME(ProcSet));
 		if (obj)
-			pdf_dict_put(ctx, res, PDF_NAME_ProcSet, obj);
+			pdf_dict_put(ctx, res, PDF_NAME(ProcSet), obj);
 
 		/* ColorSpace - no cleaning possible. */
 		/* Properties - no cleaning possible. */
@@ -271,8 +293,10 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 			(*proc_fn)(ctx, buffer, res, proc_arg);
 
 		/* Update resource dictionary */
-		res_ref = pdf_add_object(ctx, doc, res);
-		pdf_dict_put(ctx, page->obj, PDF_NAME_Resources, res_ref);
+		if (sanitize)
+		{
+			pdf_dict_put(ctx, page->obj, PDF_NAME(Resources), res);
+		}
 	}
 	fz_always(ctx)
 	{
@@ -281,7 +305,6 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 		fz_drop_buffer(ctx, buffer);
 		pdf_drop_obj(ctx, new_obj);
 		pdf_drop_obj(ctx, new_ref);
-		pdf_drop_obj(ctx, res_ref);
 		pdf_drop_obj(ctx, res);
 	}
 	fz_catch(ctx)
@@ -290,18 +313,18 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 	}
 }
 
-void pdf_clean_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *annot, fz_cookie *cookie, pdf_page_contents_process_fn *proc_fn, void *proc_arg, int ascii)
+void pdf_clean_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *annot, fz_cookie *cookie, pdf_page_contents_process_fn *proc_fn, void *proc_arg, int sanitize, int ascii)
 {
-	pdf_filter_annot_contents(ctx, doc, annot, cookie, proc_fn, NULL, NULL, proc_arg, ascii);
+	pdf_filter_annot_contents(ctx, doc, annot, cookie, proc_fn, NULL, NULL, proc_arg, sanitize, ascii);
 }
 
 void pdf_filter_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *annot, fz_cookie *cookie,
-	pdf_page_contents_process_fn *proc, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg, int ascii)
+	pdf_page_contents_process_fn *proc, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg, int sanitize, int ascii)
 {
 	pdf_obj *ap;
 	int i, n;
 
-	ap = pdf_dict_get(ctx, annot->obj, PDF_NAME_AP);
+	ap = pdf_dict_get(ctx, annot->obj, PDF_NAME(AP));
 	if (ap == NULL)
 		return;
 
@@ -313,6 +336,6 @@ void pdf_filter_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *an
 		if (v == NULL)
 			continue;
 
-		pdf_clean_stream_object(ctx, doc, v, NULL, cookie, 1, 1, text_filter, after_text, arg);
+		pdf_clean_stream_object(ctx, doc, v, NULL, cookie, 1, text_filter, after_text, arg, sanitize, ascii);
 	}
 }

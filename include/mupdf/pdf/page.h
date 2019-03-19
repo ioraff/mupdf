@@ -58,7 +58,7 @@ fz_link *pdf_load_links(fz_context *ctx, pdf_page *page);
 	exists (visible area after cropping), otherwise the media box will
 	be used (possibly including printing marks).
 */
-fz_rect *pdf_bound_page(fz_context *ctx, pdf_page *page, fz_rect *);
+fz_rect pdf_bound_page(fz_context *ctx, pdf_page *page);
 
 /*
 	pdf_run_page: Interpret a loaded page and render it on a device.
@@ -70,7 +70,7 @@ fz_rect *pdf_bound_page(fz_context *ctx, pdf_page *page, fz_rect *);
 	ctm: A transformation matrix applied to the objects on the page,
 	e.g. to scale or rotate the page contents as desired.
 */
-void pdf_run_page(fz_context *ctx, pdf_page *page, fz_device *dev, const fz_matrix *ctm, fz_cookie *cookie);
+void pdf_run_page(fz_context *ctx, pdf_page *page, fz_device *dev, fz_matrix ctm, fz_cookie *cookie);
 
 /*
 	pdf_run_page_with_usage: Interpret a loaded page and render it on a device.
@@ -88,7 +88,7 @@ void pdf_run_page(fz_context *ctx, pdf_page *page, fz_device *dev, const fz_matr
 	cookie: A pointer to an optional fz_cookie structure that can be used
 	to track progress, collect errors etc.
 */
-void pdf_run_page_with_usage(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_device *dev, const fz_matrix *ctm, const char *usage, fz_cookie *cookie);
+void pdf_run_page_with_usage(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_device *dev, fz_matrix ctm, const char *usage, fz_cookie *cookie);
 
 /*
 	pdf_run_page_contents: Interpret a loaded page and render it on a device.
@@ -101,7 +101,7 @@ void pdf_run_page_with_usage(fz_context *ctx, pdf_document *doc, pdf_page *page,
 	ctm: A transformation matrix applied to the objects on the page,
 	e.g. to scale or rotate the page contents as desired.
 */
-void pdf_run_page_contents(fz_context *ctx, pdf_page *page, fz_device *dev, const fz_matrix *ctm, fz_cookie *cookie);
+void pdf_run_page_contents(fz_context *ctx, pdf_page *page, fz_device *dev, fz_matrix ctm, fz_cookie *cookie);
 
 /*
 	pdf_page_contents_process_fn: A function used for processing the
@@ -141,7 +141,7 @@ typedef void (pdf_page_contents_process_fn)(fz_context *ctx, fz_buffer *buffer, 
 	to track progress, collect errors etc.
 */
 void pdf_clean_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_cookie *cookie,
-	pdf_page_contents_process_fn *proc, void *proc_arg, int ascii);
+	pdf_page_contents_process_fn *proc, void *proc_arg, int sanitize, int ascii);
 
 /*
 	pdf_clean_annot_contents: Clean a loaded annotations rendering operations,
@@ -168,7 +168,7 @@ void pdf_clean_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page,
 	to track progress, collect errors etc.
 */
 void pdf_clean_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *annot, fz_cookie *cookie,
-	pdf_page_contents_process_fn *proc, void *proc_arg, int ascii);
+	pdf_page_contents_process_fn *proc, void *proc_arg, int sanitize, int ascii);
 
 /*
 	pdf_filter_page_contents: Performs the same task as
@@ -184,7 +184,8 @@ void pdf_clean_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *ann
 	arg: Opaque value to be passed to callback functions.
 */
 void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page, fz_cookie *cookie,
-	pdf_page_contents_process_fn *proc_fn, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg, int ascii);
+	pdf_page_contents_process_fn *proc_fn, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg,
+	int sanitize, int ascii);
 
 /*
 	pdf_filter_annot_contents: Performs the same task as
@@ -200,7 +201,8 @@ void pdf_filter_page_contents(fz_context *ctx, pdf_document *doc, pdf_page *page
 	arg: Opaque value to be passed to callback functions.
 */
 void pdf_filter_annot_contents(fz_context *ctx, pdf_document *doc, pdf_annot *annot, fz_cookie *cookie,
-	pdf_page_contents_process_fn *proc, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg, int ascii);
+	pdf_page_contents_process_fn *proc, pdf_text_filter_fn *text_filter, pdf_after_text_object_fn *after_text, void *arg,
+	int sanitize, int ascii);
 
 /*
 	Presentation interface.

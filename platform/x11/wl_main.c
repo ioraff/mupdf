@@ -706,7 +706,7 @@ char *wintextinput(pdfapp_t *app, char *inittext, int retry)
 	return NULL;
 }
 
-int winchoiceinput(pdfapp_t *app, int nopts, char *opts[], int *nvals, char *vals[])
+int winchoiceinput(pdfapp_t *app, int nopts, const char *opts[], int *nvals, const char *vals[])
 {
 	/* FIXME: temporary dummy implementation */
 	return 0;
@@ -841,13 +841,38 @@ void winreplacefile(char *source, char *target)
 
 void wincopyfile(char *source, char *target)
 {
-	char *buf = malloc(strlen(source)+strlen(target)+5);
-	if (buf)
+	FILE *in, *out;
+	char buf[32 << 10];
+	int n;
+
+	in = fopen(source, "rb");
+	if (!in)
 	{
-		sprintf(buf, "cp %s %s", source, target);
-		system(buf);
-		free(buf);
+		winerror(&gapp, "cannot open source file for copying");
+		return;
 	}
+	out = fopen(target, "wb");
+	if (!out)
+	{
+		winerror(&gapp, "cannot open target file for copying");
+		fclose(in);
+		return;
+	}
+
+	for (;;)
+	{
+		n = fread(buf, 1, sizeof buf, in);
+		fwrite(buf, 1, n, out);
+		if (n < sizeof buf)
+		{
+			if (ferror(in))
+				winerror(&gapp, "cannot read data from source file");
+			break;
+		}
+	}
+
+	fclose(out);
+	fclose(in);
 }
 
 void cleanup(pdfapp_t *app)
@@ -1039,6 +1064,7 @@ static void winblit(pdfapp_t *app)
 		int h = MIN(y1, gapp.winh) - y0;
 		pixman_box32_t boxes[4];
 		int i, n, x, y;
+		fz_rect r;
 
 		n = 0;
 		pushbox(boxes, &n, 0, 0, x0, gapp.winh);
@@ -1093,30 +1119,31 @@ static void winblit(pdfapp_t *app)
 		double scale = app->resolution / 72.;
 		for (i = 0; i < gapp.hit_count; i++)
 		{
+			r = fz_rect_from_quad(gapp.hit_bbox[i]);
 			switch (gapp.rotate % 360) {
 			case 0:
-				x = gapp.hit_bbox[i].x0;
-				y = gapp.hit_bbox[i].y0;
-				w = gapp.hit_bbox[i].x1 - gapp.hit_bbox[i].x0;
-				h = gapp.hit_bbox[i].y1 - gapp.hit_bbox[i].y0;
+				x = r.x0;
+				y = r.y0;
+				w = r.x1 - r.x0;
+				h = r.y1 - r.y0;
 				break;
 			case 90:
-				x = -gapp.hit_bbox[i].y1;
-				y = gapp.hit_bbox[i].x0;
-				w = gapp.hit_bbox[i].y1 - gapp.hit_bbox[i].y0;
-				h = gapp.hit_bbox[i].x1 - gapp.hit_bbox[i].x0;
+				x = -r.y1;
+				y = r.x0;
+				w = r.y1 - r.y0;
+				h = r.x1 - r.x0;
 				break;
 			case 180:
-				x = -gapp.hit_bbox[i].x1;
-				y = -gapp.hit_bbox[i].y1;
-				w = gapp.hit_bbox[i].x1 - gapp.hit_bbox[i].x0;
-				h = gapp.hit_bbox[i].y1 - gapp.hit_bbox[i].y0;
+				x = -r.x1;
+				y = -r.y1;
+				w = r.x1 - r.x0;
+				h = r.y1 - r.y0;
 				break;
 			case 270:
-				x = gapp.hit_bbox[i].y0;
-				y = -gapp.hit_bbox[i].x1;
-				w = gapp.hit_bbox[i].y1 - gapp.hit_bbox[i].y0;
-				h = gapp.hit_bbox[i].x1 - gapp.hit_bbox[i].x0;
+				x = r.y0;
+				y = -r.x1;
+				w = r.y1 - r.y0;
+				h = r.x1 - r.x0;
 				break;
 			}
 			x = x * scale + x0 - image_x;
@@ -1170,17 +1197,17 @@ void windrawstring(pdfapp_t *app, int x, int y, char *s)
 	fz_matrix mat;
 	int resolution = winresolution();
 
-	fz_translate(&mat, 5, 20);
-	fz_pre_scale(&mat, resolution / 72., resolution / 72.);
+	mat = fz_translate(5, 20);
+	mat = fz_pre_scale(mat, resolution / 72., resolution / 72.);
 
 	fz_try(app->ctx)
 	{
-		dev = fz_new_draw_device(app->ctx, &mat, win->image->pixmap);
+		dev = fz_new_draw_device(app->ctx, mat, win->image->pixmap);
 		text = fz_new_text(app->ctx);
 
-		fz_scale(&mat, 12, -12);
-		fz_show_string(app->ctx, text, font, &mat, s, 0, 0, 0, 0);
-		fz_fill_text(app->ctx, dev, text, &fz_identity, fz_device_rgb(app->ctx), color, 1, NULL);
+		mat = fz_scale(12, -12);
+		fz_show_string(app->ctx, text, font, mat, s, 0, 0, 0, 0);
+		fz_fill_text(app->ctx, dev, text, fz_identity, fz_device_rgb(app->ctx), color, 1, NULL);
 		fz_close_device(app->ctx, dev);
 	}
 	fz_always(app->ctx)
@@ -1264,6 +1291,16 @@ void winopenuri(pdfapp_t *app, char *buf)
 		exit(0);
 	}
 	waitpid(pid, NULL, 0);
+}
+
+int winquery(pdfapp_t *app, const char *query)
+{
+	return QUERY_NO;
+}
+
+int wingetcertpath(char *buf, int len)
+{
+	return 0;
 }
 
 static void onkey(int c, int modifiers)

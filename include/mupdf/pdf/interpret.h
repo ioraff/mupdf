@@ -30,7 +30,7 @@ struct pdf_processor_s
 	void (*op_gs_BM)(fz_context *ctx, pdf_processor *proc, const char *blendmode);
 	void (*op_gs_ca)(fz_context *ctx, pdf_processor *proc, float alpha);
 	void (*op_gs_CA)(fz_context *ctx, pdf_processor *proc, float alpha);
-	void (*op_gs_SMask)(fz_context *ctx, pdf_processor *proc, pdf_xobject *smask, pdf_obj *page_resources, float *bc, int luminosity);
+	void (*op_gs_SMask)(fz_context *ctx, pdf_processor *proc, pdf_obj *smask, pdf_obj *page_resources, float *bc, int luminosity);
 	void (*op_gs_end)(fz_context *ctx, pdf_processor *proc);
 
 	/* special graphics state */
@@ -113,7 +113,7 @@ struct pdf_processor_s
 	void (*op_BI)(fz_context *ctx, pdf_processor *proc, fz_image *image);
 	void (*op_sh)(fz_context *ctx, pdf_processor *proc, const char *name, fz_shade *shade);
 	void (*op_Do_image)(fz_context *ctx, pdf_processor *proc, const char *name, fz_image *image);
-	void (*op_Do_form)(fz_context *ctx, pdf_processor *proc, const char *name, pdf_xobject *form, pdf_obj *page_resources);
+	void (*op_Do_form)(fz_context *ctx, pdf_processor *proc, const char *name, pdf_obj *form, pdf_obj *page_resources);
 
 	/* marked content */
 	void (*op_MP)(fz_context *ctx, pdf_processor *proc, const char *tag);
@@ -179,12 +179,8 @@ struct pdf_csi_s
 	defined within the PDF reference manual, and others are possible.
 
 	gstate: The initial graphics state.
-
-	nested: The nested depth of this interpreter. This should be
-	0 for an initial call, and will be incremented in nested calls
-	due to Type 3 fonts.
 */
-pdf_processor *pdf_new_run_processor(fz_context *ctx, fz_device *dev, const fz_matrix *ctm, const char *usage, pdf_gstate *gstate, int nested, fz_default_colorspaces *default_cs);
+pdf_processor *pdf_new_run_processor(fz_context *ctx, fz_device *dev, fz_matrix ctm, const char *usage, pdf_gstate *gstate, fz_default_colorspaces *default_cs);
 
 /*
 	pdf_new_buffer_processor: Create a buffer processor. This
@@ -246,9 +242,9 @@ pdf_processor *pdf_new_output_processor(fz_context *ctx, fz_output *out, int ahx
 */
 pdf_processor *pdf_new_filter_processor(fz_context *ctx, pdf_document *doc, pdf_processor *chain, pdf_obj *old_res, pdf_obj *new_res);
 
-typedef int (pdf_text_filter_fn)(fz_context *ctx, void *opaque, int *ucsbuf, int ucslen, fz_matrix *trm, fz_rect *bbox);
+typedef int (pdf_text_filter_fn)(fz_context *ctx, void *opaque, int *ucsbuf, int ucslen, fz_matrix trm, fz_rect bbox);
 
-typedef void (pdf_after_text_object_fn)(fz_context *ctx, void *opaque, pdf_document *doc, pdf_processor *chain, const fz_matrix *ctm);
+typedef void (pdf_after_text_object_fn)(fz_context *ctx, void *opaque, pdf_document *doc, pdf_processor *chain, fz_matrix ctm);
 
 /*
 	pdf_new_filter_processor_with_text_filter: Create a filter
