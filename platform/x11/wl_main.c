@@ -112,6 +112,7 @@ static int justcopied = 0;
 static char *password = "";
 static pixman_color_t bgcolor = {0x7000, 0x7000, 0x7000};
 static pixman_color_t shcolor = {0x4000, 0x4000, 0x4000};
+static pixman_color_t black = {0x0000, 0x0000, 0x0000, 0xffff};
 static pixman_color_t white = {0xffff, 0xffff, 0xffff, 0xffff};
 static pixman_image_t *solidwhite;
 static char *filename;
@@ -267,21 +268,27 @@ keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t serial, uint32_t
 			c = '\033';
 			break;
 		case XKB_KEY_Up:
+		case XKB_KEY_KP_Up:
 			c = 'k';
 			break;
 		case XKB_KEY_Down:
+		case XKB_KEY_KP_Down:
 			c = 'j';
 			break;
 		case XKB_KEY_Left:
+		case XKB_KEY_KP_Left:
 			c = 'b';
 			break;
 		case XKB_KEY_Right:
+		case XKB_KEY_KP_Right:
 			c = ' ';
 			break;
 		case XKB_KEY_Page_Up:
+		case XKB_KEY_KP_Page_Up:
 			c = ',';
 			break;
 		case XKB_KEY_Page_Down:
+		case XKB_KEY_KP_Page_Down:
 			c = '.';
 			break;
 		case XKB_KEY_NoSymbol:
@@ -1071,12 +1078,10 @@ static void winblit(pdfapp_t *app)
 		pushbox(boxes, &n, x1, 0, gapp.winw, gapp.winh);
 		pushbox(boxes, &n, x0, 0, x1, y0);
 		pushbox(boxes, &n, x0, y1, x1, gapp.winh);
-		pixman_image_fill_boxes(PIXMAN_OP_SRC, win->image->pixman, &bgcolor, n, boxes);
-
-		n = 0;
-		pushbox(boxes, &n, x0 + 2, y1, x0 + image_w + 2, y1 + 2);
-		pushbox(boxes, &n, x1, y0 + 2, x1 + 2, y0 + image_h);
-		pixman_image_fill_boxes(PIXMAN_OP_SRC, win->image->pixman, &shcolor, n, boxes);
+		if (app->invert)
+			pixman_image_fill_boxes(PIXMAN_OP_SRC, win->image->pixman, &black, n, boxes);
+		else
+			pixman_image_fill_boxes(PIXMAN_OP_SRC, win->image->pixman, &bgcolor, n, boxes);
 
 		switch (image_n)
 		{
@@ -1355,9 +1360,9 @@ static void signal_handler(int signal)
 		reloading = 1;
 }
 
-static void usage(void)
+static void usage(const char *argv0)
 {
-	fprintf(stderr, "usage: mupdf [options] file.pdf [page]\n");
+	fprintf(stderr, "usage: %s [options] file.pdf [page]\n", argv0);
 	fprintf(stderr, "\t-p -\tpassword\n");
 	fprintf(stderr, "\t-r -\tresolution\n");
 	fprintf(stderr, "\t-A -\tset anti-aliasing quality in bits (0=off, 8=best)\n");
@@ -1381,7 +1386,6 @@ int main(int argc, char **argv)
 	struct timeval now;
 	struct timeval *timeout;
 	struct timeval tmo_advance_delay;
-	int bps = 0;
 
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
 	if (!ctx)
@@ -1392,16 +1396,14 @@ int main(int argc, char **argv)
 
 	pdfapp_init(ctx, &gapp);
 
-	while ((c = fz_getopt(argc, argv, "Ip:r:A:C:W:H:S:U:Xb:")) != -1)
+	while ((c = fz_getopt(argc, argv, "Ip:r:A:C:W:H:S:U:X")) != -1)
 	{
 		switch (c)
 		{
 		case 'C':
 			c = strtol(fz_optarg, NULL, 16);
 			gapp.tint = 1;
-			gapp.tint_r = (c >> 16) & 255;
-			gapp.tint_g = (c >> 8) & 255;
-			gapp.tint_b = (c) & 255;
+			gapp.tint_white = c;
 			break;
 		case 'p': password = fz_optarg; break;
 		case 'r': resolution = atoi(fz_optarg); break;
@@ -1412,13 +1414,12 @@ int main(int argc, char **argv)
 		case 'S': gapp.layout_em = fz_atof(fz_optarg); break;
 		case 'U': gapp.layout_css = fz_optarg; break;
 		case 'X': gapp.layout_use_doc_css = 0; break;
-		case 'b': bps = (fz_optarg && *fz_optarg) ? fz_atoi(fz_optarg) : 4096; break;
-		default: usage();
+		default: usage(argv[0]);
 		}
 	}
 
 	if (argc - fz_optind == 0)
-		usage();
+		usage(argv[0]);
 
 	filename = argv[fz_optind++];
 
@@ -1435,6 +1436,7 @@ int main(int argc, char **argv)
 		resolution = MAXRES;
 
 	gapp.transitions_enabled = 1;
+	gapp.default_resolution = resolution;
 	gapp.resolution = resolution;
 	gapp.pageno = pageno;
 
@@ -1442,10 +1444,7 @@ int main(int argc, char **argv)
 	tmo_at.tv_usec = 0;
 	timeout = NULL;
 
-	if (bps)
-		pdfapp_open_progressive(&gapp, filename, 0, bps);
-	else
-		pdfapp_open(&gapp, filename, 0);
+	pdfapp_open(&gapp, filename, 0);
 
 	FD_ZERO(&fds);
 
