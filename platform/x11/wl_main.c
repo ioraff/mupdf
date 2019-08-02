@@ -1212,7 +1212,7 @@ void windrawstring(pdfapp_t *app, int x, int y, char *s)
 
 		mat = fz_scale(12, -12);
 		fz_show_string(app->ctx, text, font, mat, s, 0, 0, 0, 0);
-		fz_fill_text(app->ctx, dev, text, fz_identity, fz_device_rgb(app->ctx), color, 1, NULL);
+		fz_fill_text(app->ctx, dev, text, fz_identity, fz_device_rgb(app->ctx), color, 1, fz_default_color_params);
 		fz_close_device(app->ctx, dev);
 	}
 	fz_always(app->ctx)
@@ -1386,6 +1386,7 @@ int main(int argc, char **argv)
 	struct timeval now;
 	struct timeval *timeout;
 	struct timeval tmo_advance_delay;
+	int kbps = 0;
 
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
 	if (!ctx)
@@ -1396,7 +1397,7 @@ int main(int argc, char **argv)
 
 	pdfapp_init(ctx, &gapp);
 
-	while ((c = fz_getopt(argc, argv, "Ip:r:A:C:W:H:S:U:X")) != -1)
+	while ((c = fz_getopt(argc, argv, "Ip:r:A:C:W:H:S:U:Xb:")) != -1)
 	{
 		switch (c)
 		{
@@ -1414,6 +1415,7 @@ int main(int argc, char **argv)
 		case 'S': gapp.layout_em = fz_atof(fz_optarg); break;
 		case 'U': gapp.layout_css = fz_optarg; break;
 		case 'X': gapp.layout_use_doc_css = 0; break;
+		case 'b': kbps = fz_atoi(fz_optarg); break;
 		default: usage(argv[0]);
 		}
 	}
@@ -1444,7 +1446,10 @@ int main(int argc, char **argv)
 	tmo_at.tv_usec = 0;
 	timeout = NULL;
 
-	pdfapp_open(&gapp, filename, 0);
+	if (kbps)
+		pdfapp_open_progressive(&gapp, filename, 0, kbps);
+	else
+		pdfapp_open(&gapp, filename, 0);
 
 	FD_ZERO(&fds);
 

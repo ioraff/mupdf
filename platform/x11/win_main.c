@@ -1245,17 +1245,19 @@ get_system_dpi(void)
 
 static void usage(const char *argv0)
 {
-	fprintf(stderr, "usage: %s [options] file.pdf [page]\n", argv0);
-	fprintf(stderr, "\t-p -\tpassword\n");
-	fprintf(stderr, "\t-r -\tresolution\n");
-	fprintf(stderr, "\t-A -\tset anti-aliasing quality in bits (0=off, 8=best)\n");
-	fprintf(stderr, "\t-C -\tRRGGBB (tint color in hexadecimal syntax)\n");
-	fprintf(stderr, "\t-W -\tpage width for EPUB layout\n");
-	fprintf(stderr, "\t-H -\tpage height for EPUB layout\n");
-	fprintf(stderr, "\t-I -\tinvert colors\n");
-	fprintf(stderr, "\t-S -\tfont size for EPUB layout\n");
-	fprintf(stderr, "\t-U -\tuser style sheet for EPUB layout\n");
-	fprintf(stderr, "\t-X\tdisable document styles for EPUB layout\n");
+	const char *msg =
+		"usage: mupdf [options] file.pdf [page]\n"
+		"\t-p -\tpassword\n"
+		"\t-r -\tresolution\n"
+		"\t-A -\tset anti-aliasing quality in bits (0=off, 8=best)\n"
+		"\t-C -\tRRGGBB (tint color in hexadecimal syntax)\n"
+		"\t-W -\tpage width for EPUB layout\n"
+		"\t-H -\tpage height for EPUB layout\n"
+		"\t-I -\tinvert colors\n"
+		"\t-S -\tfont size for EPUB layout\n"
+		"\t-U -\tuser style sheet for EPUB layout\n"
+		"\t-X\tdisable document styles for EPUB layout\n";
+	MessageBoxA(NULL, msg, "MuPDF: Usage", MB_OK);
 	exit(1);
 }
 
@@ -1269,20 +1271,21 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShow
 	MSG msg;
 	int code;
 	fz_context *ctx;
+	int kbps = 0;
 	int displayRes = get_system_dpi();
 	int c;
 
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
 	if (!ctx)
 	{
-		fprintf(stderr, "cannot initialise context\n");
+		MessageBoxA(NULL, "Cannot initialize MuPDF context.", "MuPDF: Error", MB_OK);
 		exit(1);
 	}
 	pdfapp_init(ctx, &gapp);
 
 	argv = fz_argv_from_wargv(argc, wargv);
 
-	while ((c = fz_getopt(argc, argv, "Ip:r:A:C:W:H:S:U:X")) != -1)
+	while ((c = fz_getopt(argc, argv, "Ip:r:A:C:W:H:S:U:Xb:")) != -1)
 	{
 		switch (c)
 		{
@@ -1298,6 +1301,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShow
 		case 'W': gapp.layout_w = fz_atoi(fz_optarg); break;
 		case 'H': gapp.layout_h = fz_atoi(fz_optarg); break;
 		case 'S': gapp.layout_em = fz_atoi(fz_optarg); break;
+		case 'b': kbps = fz_atoi(fz_optarg); break;
 		case 'U': gapp.layout_css = fz_optarg; break;
 		case 'X': gapp.layout_use_doc_css = 0; break;
 		default: usage(argv[0]);
@@ -1327,7 +1331,10 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShow
 	if (fz_optind < argc)
 		gapp.pageno = atoi(argv[fz_optind++]);
 
-	pdfapp_open(&gapp, filename, 0);
+	if (kbps)
+		pdfapp_open_progressive(&gapp, filename, 0, kbps);
+	else
+		pdfapp_open(&gapp, filename, 0);
 
 	while (GetMessage(&msg, NULL, 0, 0))
 	{
