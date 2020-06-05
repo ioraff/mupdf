@@ -282,7 +282,6 @@ fz_add_stext_char_imp(fz_context *ctx, fz_stext_device *dev, fz_font *font, int 
 	fz_point delta;
 	float spacing = 0;
 	float base_offset = 0;
-	int rtl = 0;
 
 	dev->curdir = direction_from_bidi_class(ucdn_get_bidi_class(c), dev->curdir);
 
@@ -406,10 +405,6 @@ fz_add_stext_char_imp(fz_context *ctx, fz_stext_device *dev, fz_font *font, int 
 			else
 			{
 				new_line = 0;
-				if (spacing > size * SPACE_DIST || spacing < 0)
-					rtl = 0; /* backward (or big jump to 'right' side) means logical order */
-				else
-					rtl = 1; /* visual order, we need to reverse in a post process pass */
 			}
 		}
 
