@@ -798,6 +798,7 @@ static void winopen(void)
 	if (!gwin.toplevel)
 		fz_throw(gapp.ctx, FZ_ERROR_MEMORY, "cannot create window toplevel surface");
 	xdg_toplevel_add_listener(gwin.toplevel, &toplevel_listener, &gwin);
+	wl_surface_commit(gwin.surface);
 
 	/* check for initial configure */
 	wl_display_roundtrip(display);
