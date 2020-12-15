@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#if FZ_ENABLE_HTML
 #include <gumbo.h>
+#endif
 
 /* #define FZ_XML_SEQ */
 
@@ -845,6 +847,7 @@ fz_parse_xml(fz_context *ctx, fz_buffer *buf, int preserve_white)
 	return xml;
 }
 
+#if FZ_ENABLE_HTML
 /*
 	Parse the contents of buffer into a tree of XML nodes, using the HTML5 syntax.
 
@@ -999,3 +1002,4 @@ fz_parse_xml_from_html5(fz_context *ctx, fz_buffer *buf)
 
 	return xml;
 }
+#endif /* FZ_ENABLE_HTML */
