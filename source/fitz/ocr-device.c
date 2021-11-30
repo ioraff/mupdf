@@ -1,15 +1,31 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include <assert.h>
 #include <string.h>
 
 #undef DEBUG_OCR
-
-#if !defined(HAVE_LEPTONICA) || !defined(HAVE_TESSERACT)
-#ifndef OCR_DISABLED
-#define OCR_DISABLED
-#endif
-#endif
 
 #ifndef OCR_DISABLED
 #include "tessocr.h"
@@ -88,6 +104,10 @@ typedef struct word_record_s {
 typedef struct fz_ocr_device_s
 {
 	fz_device super;
+
+	/* Progress monitoring */
+	int (*progress)(fz_context *, void *, int progress);
+	void *progress_arg;
 
 	fz_device *target;
 	fz_display_list *list;
@@ -287,8 +307,8 @@ fz_ocr_end_group(fz_context *ctx, fz_device *dev)
 {
 	fz_ocr_device *ocr = (fz_ocr_device *)dev;
 
-	fz_pop_clip(ctx, ocr->list_dev);
-	fz_pop_clip(ctx, ocr->draw_dev);
+	fz_end_group(ctx, ocr->list_dev);
+	fz_end_group(ctx, ocr->draw_dev);
 }
 
 static int
@@ -1025,6 +1045,17 @@ new_rewrite_device(fz_context *ctx, fz_device *target, word_record **words, int 
 	return &rewrite->super;
 }
 
+static int
+fz_ocr_progress(fz_context *ctx, void *arg, int prog)
+{
+	fz_ocr_device *ocr = (fz_ocr_device *)arg;
+
+	if (ocr->progress == NULL)
+		return 0;
+
+	return ocr->progress(ctx, ocr->progress_arg, prog);
+}
+
 static void
 fz_ocr_close_device(fz_context *ctx, fz_device *dev)
 {
@@ -1040,7 +1071,7 @@ fz_ocr_close_device(fz_context *ctx, fz_device *dev)
 
 	fz_try(ctx)
 	{
-		ocr_recognise(ctx, tessapi, ocr->pixmap, char_callback, ocr);
+		ocr_recognise(ctx, tessapi, ocr->pixmap, char_callback, &fz_ocr_progress, ocr);
 		flush_word(ctx, ocr);
 	}
 	fz_always(ctx)
@@ -1080,7 +1111,14 @@ fz_ocr_drop_device(fz_context *ctx, fz_device *dev)
 #endif
 
 fz_device *
-fz_new_ocr_device(fz_context *ctx, fz_device *target, fz_matrix ctm, fz_rect mediabox, int with_list, const char *language)
+fz_new_ocr_device(fz_context *ctx,
+		fz_device *target,
+		fz_matrix ctm,
+		fz_rect mediabox,
+		int with_list,
+		const char *language,
+		int (*progress)(fz_context *, void *, int),
+		void *progress_arg)
 {
 #ifdef OCR_DISABLED
 	fz_throw(ctx, FZ_ERROR_GENERIC, "OCR Disabled in this build");
@@ -1125,6 +1163,9 @@ fz_new_ocr_device(fz_context *ctx, fz_device *target, fz_matrix ctm, fz_rect med
 	dev->super.set_default_colorspaces = fz_ocr_set_default_colorspaces;
 	dev->super.begin_layer = fz_ocr_begin_layer;
 	dev->super.end_layer = fz_ocr_end_layer;
+
+	dev->progress = progress;
+	dev->progress_arg = progress_arg;
 
 	fz_try(ctx)
 	{

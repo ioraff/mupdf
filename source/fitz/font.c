@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/ucdn.h"
 
@@ -59,7 +81,7 @@ int ft_name_index(void *face, const char *name)
 			}
 			if (code == 0)
 			{
-				char buf[10];
+				char buf[12];
 				sprintf(buf, "uni%04X", unicode);
 				code = FT_Get_Name_Index(face, buf);
 			}
@@ -446,6 +468,7 @@ fz_font *fz_load_fallback_font(fz_context *ctx, int script, int language, int se
 {
 	fz_font **fontp;
 	const unsigned char *data;
+	int ordering = FZ_ADOBE_JAPAN;
 	int index;
 	int subfont;
 	int size;
@@ -460,10 +483,10 @@ fz_font *fz_load_fallback_font(fz_context *ctx, int script, int language, int se
 	{
 		switch (language)
 		{
-		case FZ_LANG_ja: index = UCDN_LAST_SCRIPT + 1; break;
-		case FZ_LANG_ko: index = UCDN_LAST_SCRIPT + 2; break;
-		case FZ_LANG_zh_Hans: index = UCDN_LAST_SCRIPT + 3; break;
-		case FZ_LANG_zh_Hant: index = UCDN_LAST_SCRIPT + 4; break;
+		case FZ_LANG_ja: index = UCDN_LAST_SCRIPT + 1; ordering = FZ_ADOBE_JAPAN; break;
+		case FZ_LANG_ko: index = UCDN_LAST_SCRIPT + 2; ordering = FZ_ADOBE_KOREA; break;
+		case FZ_LANG_zh_Hans: index = UCDN_LAST_SCRIPT + 3; ordering = FZ_ADOBE_GB; break;
+		case FZ_LANG_zh_Hant: index = UCDN_LAST_SCRIPT + 4; ordering = FZ_ADOBE_CNS; break;
 		}
 	}
 	if (script == UCDN_SCRIPT_ARABIC)
@@ -486,6 +509,19 @@ fz_font *fz_load_fallback_font(fz_context *ctx, int script, int language, int se
 			if (data)
 				*fontp = fz_new_font_from_memory(ctx, NULL, data, size, subfont, 0);
 		}
+	}
+
+	switch (script)
+	{
+	case UCDN_SCRIPT_HANGUL: script = UCDN_SCRIPT_HAN; ordering = FZ_ADOBE_KOREA; break;
+	case UCDN_SCRIPT_HIRAGANA: script = UCDN_SCRIPT_HAN; ordering = FZ_ADOBE_JAPAN; break;
+	case UCDN_SCRIPT_KATAKANA: script = UCDN_SCRIPT_HAN; ordering = FZ_ADOBE_JAPAN; break;
+	case UCDN_SCRIPT_BOPOMOFO: script = UCDN_SCRIPT_HAN; ordering = FZ_ADOBE_CNS; break;
+	}
+	if (*fontp && (script == UCDN_SCRIPT_HAN))
+	{
+		(*fontp)->flags.cjk = 1;
+		(*fontp)->flags.cjk_lang = ordering;
 	}
 
 	return *fontp;
@@ -805,14 +841,21 @@ fz_new_cjk_font(fz_context *ctx, int ordering)
 {
 	const unsigned char *data;
 	int size, index;
+	fz_font *font;
 	if (ordering >= 0 && ordering < (int)nelem(ctx->font->cjk))
 	{
 		if (ctx->font->cjk[ordering])
 			return fz_keep_font(ctx, ctx->font->cjk[ordering]);
 		data = fz_lookup_cjk_font(ctx, ordering, &size, &index);
 		if (data)
+			font = fz_new_font_from_memory(ctx, NULL, data, size, index, 0);
+		else
+			font = fz_load_system_cjk_font(ctx, "SourceHanSerif", ordering, 1);
+		if (font)
 		{
-			ctx->font->cjk[ordering] = fz_new_font_from_memory(ctx, NULL, data, size, index, 0);
+			font->flags.cjk = 1;
+			font->flags.cjk_lang = ordering;
+			ctx->font->cjk[ordering] = font;
 			return fz_keep_font(ctx, ctx->font->cjk[ordering]);
 		}
 	}
@@ -1627,7 +1670,7 @@ fz_rect
 fz_bound_glyph(fz_context *ctx, fz_font *font, int gid, fz_matrix trm)
 {
 	fz_rect rect;
-	if (font->bbox_table && gid < font->glyph_count)
+	if (font->bbox_table && gid < font->glyph_count && gid >= 0)
 	{
 		/* If the bbox is infinite or empty, distrust it */
 		if (fz_is_infinite_rect(font->bbox_table[gid]) || fz_is_empty_rect(font->bbox_table[gid]))
@@ -1678,7 +1721,7 @@ int fz_glyph_cacheable(fz_context *ctx, fz_font *font, int gid)
 }
 
 static float
-fz_advance_ft_glyph(fz_context *ctx, fz_font *font, int gid, int wmode)
+fz_advance_ft_glyph_aux(fz_context *ctx, fz_font *font, int gid, int wmode, int locked)
 {
 	FT_Error fterr;
 	FT_Fixed adv = 0;
@@ -1698,9 +1741,11 @@ fz_advance_ft_glyph(fz_context *ctx, fz_font *font, int gid, int wmode)
 	mask = FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_IGNORE_TRANSFORM;
 	if (wmode)
 		mask |= FT_LOAD_VERTICAL_LAYOUT;
-	fz_lock(ctx, FZ_LOCK_FREETYPE);
+	if (!locked)
+		fz_lock(ctx, FZ_LOCK_FREETYPE);
 	fterr = FT_Get_Advance(font->ft_face, gid, mask, &adv);
-	fz_unlock(ctx, FZ_LOCK_FREETYPE);
+	if (!locked)
+		fz_unlock(ctx, FZ_LOCK_FREETYPE);
 	if (fterr && fterr != FT_Err_Invalid_Argument)
 	{
 		fz_warn(ctx, "FT_Get_Advance(%s,%d): %s", font->name, gid, ft_error_string(fterr));
@@ -1712,6 +1757,12 @@ fz_advance_ft_glyph(fz_context *ctx, fz_font *font, int gid, int wmode)
 		}
 	}
 	return (float) adv / ((FT_Face)font->ft_face)->units_per_EM;
+}
+
+static float
+fz_advance_ft_glyph(fz_context *ctx, fz_font *font, int gid, int wmode)
+{
+	return fz_advance_ft_glyph_aux(ctx, font, gid, wmode, 0);
 }
 
 static float
@@ -1752,14 +1803,24 @@ fz_advance_glyph(fz_context *ctx, fz_font *font, int gid, int wmode)
 			return fz_advance_ft_glyph(ctx, font, gid, 1);
 		if (gid >= 0 && gid < font->glyph_count && gid < MAX_ADVANCE_CACHE)
 		{
+			float f;
+			fz_lock(ctx, FZ_LOCK_FREETYPE);
 			if (!font->advance_cache)
 			{
 				int i;
-				font->advance_cache = Memento_label(fz_malloc_array(ctx, font->glyph_count, float), "font_advance_cache");
+				fz_try(ctx)
+					font->advance_cache = Memento_label(fz_malloc_array(ctx, font->glyph_count, float), "font_advance_cache");
+				fz_catch(ctx)
+				{
+					fz_unlock(ctx, FZ_LOCK_FREETYPE);
+					fz_rethrow(ctx);
+				}
 				for (i = 0; i < font->glyph_count; ++i)
-					font->advance_cache[i] = fz_advance_ft_glyph(ctx, font, i, 0);
+					font->advance_cache[i] = fz_advance_ft_glyph_aux(ctx, font, i, 0, 1);
 			}
-			return font->advance_cache[gid];
+			f = font->advance_cache[gid];
+			fz_unlock(ctx, FZ_LOCK_FREETYPE);
+			return f;
 		}
 
 		return fz_advance_ft_glyph(ctx, font, gid, 0);

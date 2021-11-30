@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -353,7 +375,8 @@ pdf_compute_encryption_key(fz_context *ctx, pdf_crypt *crypt, unsigned char *pas
 	if (pwlen > 32)
 		pwlen = 32;
 	memcpy(buf, password, pwlen);
-	memcpy(buf + pwlen, padding, 32 - pwlen);
+	if (pwlen < 32)
+		memcpy(buf + pwlen, padding, 32 - pwlen);
 
 	/* Step 2 - init md5 and pass value of step 1 */
 	fz_md5_init(&md5);
@@ -656,7 +679,8 @@ pdf_authenticate_owner_password(fz_context *ctx, pdf_crypt *crypt, unsigned char
 		if (pwlen > 32)
 			pwlen = 32;
 		memcpy(pwbuf, ownerpass, pwlen);
-		memcpy(pwbuf + pwlen, padding, 32 - pwlen);
+		if (pwlen < 32)
+			memcpy(pwbuf + pwlen, padding, 32 - pwlen);
 
 		fz_md5_init(&md5);
 		fz_md5_update(&md5, pwbuf, 32);
@@ -681,7 +705,8 @@ pdf_authenticate_owner_password(fz_context *ctx, pdf_crypt *crypt, unsigned char
 		if (pwlen > 32)
 			pwlen = 32;
 		memcpy(pwbuf, ownerpass, pwlen);
-		memcpy(pwbuf + pwlen, padding, 32 - pwlen);
+		if (pwlen < 32)
+			memcpy(pwbuf + pwlen, padding, 32 - pwlen);
 
 		fz_md5_init(&md5);
 		fz_md5_update(&md5, pwbuf, 32);
@@ -842,7 +867,8 @@ pdf_compute_owner_password(fz_context *ctx, pdf_crypt *crypt, unsigned char *opa
 	if (opwlen > 32)
 		opwlen = 32;
 	memcpy(obuf, opassword, opwlen);
-	memcpy(obuf + opwlen, padding, 32 - opwlen);
+	if (opwlen < 32)
+		memcpy(obuf + opwlen, padding, 32 - opwlen);
 
 	/* Step 2 - init md5 and pass value of step 1 */
 	fz_md5_init(&md5);
@@ -867,7 +893,8 @@ pdf_compute_owner_password(fz_context *ctx, pdf_crypt *crypt, unsigned char *opa
 	if (upwlen > 32)
 		upwlen = 32;
 	memcpy(ubuf, upassword, upwlen);
-	memcpy(ubuf + upwlen, padding, 32 - upwlen);
+	if (upwlen < 32)
+		memcpy(ubuf + upwlen, padding, 32 - upwlen);
 
 	/* Step 6 - encrypt user password md5 hash */
 	fz_arc4_encrypt(&arc4, digest, ubuf, 32);
@@ -1050,6 +1077,14 @@ pdf_compute_object_key(pdf_crypt *crypt, pdf_crypt_filter *cf, int num, int gen,
  * indirect references.
  */
 
+static int is_signature(fz_context *ctx, pdf_obj *obj)
+{
+	if (pdf_dict_get(ctx, obj, PDF_NAME(Type)) == PDF_NAME(Sig))
+		if (pdf_dict_get(ctx, obj, PDF_NAME(Contents)) && pdf_dict_get(ctx, obj, PDF_NAME(ByteRange)) && pdf_dict_get(ctx, obj, PDF_NAME(Filter)))
+			return 1;
+	return 0;
+}
+
 static void
 pdf_crypt_obj_imp(fz_context *ctx, pdf_crypt *crypt, pdf_obj *obj, unsigned char *key, int keylen)
 {
@@ -1110,6 +1145,9 @@ pdf_crypt_obj_imp(fz_context *ctx, pdf_crypt *crypt, pdf_obj *obj, unsigned char
 		int n = pdf_dict_len(ctx, obj);
 		for (i = 0; i < n; i++)
 		{
+			if (pdf_dict_get_key(ctx, obj, i) == PDF_NAME(Contents) && is_signature(ctx, obj))
+				continue;
+
 			pdf_crypt_obj_imp(ctx, crypt, pdf_dict_get_val(ctx, obj, i), key, keylen);
 		}
 	}

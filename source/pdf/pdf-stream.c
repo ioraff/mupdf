@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -101,6 +123,8 @@ build_compression_params(fz_context *ctx, pdf_obj *f, pdf_obj *p, fz_compression
 	int columns = pdf_to_int(ctx, columns_obj);
 	int colors = pdf_dict_get_int(ctx, p, PDF_NAME(Colors));
 	int bpc = pdf_dict_get_int(ctx, p, PDF_NAME(BitsPerComponent));
+	if (bpc == 0)
+		bpc = 8;
 
 	params->type = FZ_IMAGE_RAW;
 
@@ -158,6 +182,7 @@ build_compression_params(fz_context *ctx, pdf_obj *f, pdf_obj *p, fz_compression
 
 		params->type = FZ_IMAGE_JBIG2;
 		params->u.jbig2.globals = NULL;
+		params->u.jbig2.embedded = 1; /* jbig2 streams are always embedded without file headers */
 		if (g)
 		{
 			if (!pdf_is_stream(ctx, g))
@@ -293,17 +318,20 @@ pdf_open_raw_filter(fz_context *ctx, fz_stream *file_stm, pdf_document *doc, pdf
 	if (num > 0 && num < pdf_xref_len(ctx, doc))
 	{
 		x = pdf_get_xref_entry(ctx, doc, num);
-		*orig_num = x->num;
-		*orig_gen = x->gen;
-		if (x->stm_buf)
-			return fz_open_buffer(ctx, x->stm_buf);
 	}
-	else
+	if (x == NULL)
 	{
 		/* We only end up here when called from pdf_open_stream_with_offset to parse new format XRef sections. */
 		/* New style XRef sections must have generation number 0. */
 		*orig_num = num;
 		*orig_gen = 0;
+	}
+	else
+	{
+		*orig_num = x->num;
+		*orig_gen = x->gen;
+		if (x->stm_buf)
+			return fz_open_buffer(ctx, x->stm_buf);
 	}
 
 	hascrypt = pdf_stream_has_crypt(ctx, stmobj);
@@ -392,7 +420,7 @@ pdf_load_compressed_inline_image(fz_context *ctx, pdf_document *doc, pdf_obj *di
 		istm = pdf_open_inline_stream(ctx, doc, dict, length, file_stm, &bc->params);
 		leech = fz_open_leecher(ctx, istm, bc->buffer);
 		decomp = fz_open_image_decomp_stream(ctx, leech, &bc->params, &dummy_l2factor);
-		pixmap = fz_decomp_image_from_stream(ctx, decomp, image, NULL, indexed, 0);
+		pixmap = fz_decomp_image_from_stream(ctx, decomp, image, NULL, indexed, 0, NULL);
 		fz_set_compressed_image_buffer(ctx, image, bc);
 	}
 	fz_always(ctx)
@@ -415,9 +443,6 @@ pdf_open_raw_stream_number(fz_context *ctx, pdf_document *doc, int num)
 	pdf_xref_entry *x;
 	int orig_num, orig_gen;
 
-	if (num <= 0 || num >= pdf_xref_len(ctx, doc))
-		fz_throw(ctx, FZ_ERROR_GENERIC, "object id out of range (%d 0 R)", num);
-
 	x = pdf_cache_object(ctx, doc, num);
 	if (x->stm_ofs == 0)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "object is not a stream");
@@ -429,9 +454,6 @@ static fz_stream *
 pdf_open_image_stream(fz_context *ctx, pdf_document *doc, int num, fz_compression_params *params)
 {
 	pdf_xref_entry *x;
-
-	if (num <= 0 || num >= pdf_xref_len(ctx, doc))
-		fz_throw(ctx, FZ_ERROR_GENERIC, "object id out of range (%d 0 R)", num);
 
 	x = pdf_cache_object(ctx, doc, num);
 	if (x->stm_ofs == 0 && x->stm_buf == NULL)
@@ -494,6 +516,8 @@ pdf_load_raw_stream_number(fz_context *ctx, pdf_document *doc, int num)
 static int
 pdf_guess_filter_length(int len, const char *filter)
 {
+	if (len < 0)
+		len = 0;
 	if (!strcmp(filter, "ASCIIHexDecode"))
 		return len / 2;
 	if (!strcmp(filter, "ASCII85Decode"))

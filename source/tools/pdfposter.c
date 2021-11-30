@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * PDF posteriser; split pages within a PDF file into smaller lumps.
  */
@@ -12,14 +34,14 @@
 static int x_factor = 0;
 static int y_factor = 0;
 
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr,
 		"usage: mutool poster [options] input.pdf [output.pdf]\n"
 		"\t-p -\tpassword\n"
 		"\t-x\tx decimation factor\n"
 		"\t-y\ty decimation factor\n");
-	exit(1);
+	return 1;
 }
 
 static void
@@ -191,12 +213,12 @@ int pdfposter_main(int argc, char **argv)
 		case 'p': password = fz_optarg; break;
 		case 'x': x_factor = atoi(fz_optarg); break;
 		case 'y': y_factor = atoi(fz_optarg); break;
-		default: usage(); break;
+		default: return usage();
 		}
 	}
 
 	if (argc - fz_optind < 1)
-		usage();
+		return usage();
 
 	infile = argv[fz_optind++];
 

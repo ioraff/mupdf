@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include "pixmap-imp.h"
@@ -141,14 +163,21 @@ gif_read_header(fz_context *ctx, struct info *info, const unsigned char *p, cons
 	return p + 6;
 }
 
+/* coverity[-tainted_data_return] */
+static unsigned int
+safe_load_u16(const unsigned char *p)
+{
+	return p[1] << 8 | p[0];
+}
+
 static const unsigned char *
 gif_read_lsd(fz_context *ctx, struct info *info, const unsigned char *p, const unsigned char *end)
 {
 	if (end - p < 7)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "premature end in logical screen descriptor in gif image");
 
-	info->width = p[1] << 8 | p[0];
-	info->height = p[3] << 8 | p[2];
+	info->width = safe_load_u16(p);
+	info->height = safe_load_u16(p+2);
 	if (info->width <= 0)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "image width must be > 0");
 	if (info->height <= 0)
@@ -165,7 +194,7 @@ gif_read_lsd(fz_context *ctx, struct info *info, const unsigned char *p, const u
 	info->aspect = p[6];
 
 	info->xres = 96;
-	info->yres= 96;
+	info->yres = 96;
 	if (info->aspect > 0)
 		info->yres = (((float) info->aspect + 15) / 64) * 96;
 
@@ -276,7 +305,11 @@ gif_read_tbid(fz_context *ctx, struct info *info, const unsigned char *p, const 
 
 		uncompressed = fz_read_all(ctx, lzwstm, 0);
 		if (uncompressed->len < (size_t)info->image_width * info->image_height)
-			fz_throw(ctx, FZ_ERROR_GENERIC, "premature end in compressed table based image data in gif image");
+		{
+			fz_warn(ctx, "premature end in compressed table based image data in gif image");
+			while (uncompressed->len < (size_t)info->image_width * info->image_height)
+				fz_append_byte(ctx, uncompressed, 0x00);
+		}
 
 		if (info->has_lct)
 		{

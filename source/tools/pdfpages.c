@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * Information tool.
  * Print information about pages of a pdf.
@@ -9,7 +31,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-static void
+static int
 infousage(void)
 {
 	fprintf(stderr,
@@ -17,7 +39,7 @@ infousage(void)
 		"\t-p -\tpassword for decryption\n"
 		"\tpages\tcomma separated list of page numbers and ranges\n"
 		);
-	exit(1);
+	return 1;
 }
 
 static int
@@ -110,7 +132,7 @@ showpages(fz_context *ctx, pdf_document *doc, fz_output *out, const char *pageli
 	int ret = 0;
 
 	if (!doc)
-		infousage();
+		return infousage();
 
 	pagecount = pdf_count_pages(ctx, doc);
 	while ((pagelist = fz_parse_page_range(ctx, pagelist, &spage, &epage, pagecount)))
@@ -184,13 +206,12 @@ int pdfpages_main(int argc, char **argv)
 		{
 		case 'p': password = fz_optarg; break;
 		default:
-			infousage();
-			break;
+			return infousage();
 		}
 	}
 
 	if (fz_optind == argc)
-		infousage();
+		return infousage();
 
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);
 	if (!ctx)

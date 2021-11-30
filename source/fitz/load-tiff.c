@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include "pixmap-imp.h"
@@ -154,6 +176,7 @@ static const unsigned char bitrev[256] =
 	0x1f, 0x9f, 0x5f, 0xdf, 0x3f, 0xbf, 0x7f, 0xff
 };
 
+/* coverity[ +tainted_data_sanitize ] */
 static inline int tiff_getcomp(unsigned char *line, int x, int bpc)
 {
 	switch (bpc)
@@ -236,6 +259,7 @@ tiff_expand_colormap(fz_context *ctx, struct tiff *tiff)
 	unsigned char *src, *dst;
 	unsigned int x, y;
 	unsigned int stride;
+	unsigned int srcstride;
 
 	/* colormap has first all red, then all green, then all blue values */
 	/* colormap values are 0..65535, bits is 4 or 8 */
@@ -253,41 +277,40 @@ tiff_expand_colormap(fz_context *ctx, struct tiff *tiff)
 	if (tiff->imagelength > UINT_MAX / tiff->imagewidth / (tiff->samplesperpixel + 2))
 		fz_throw(ctx, FZ_ERROR_GENERIC, "image too large");
 
-	stride = tiff->imagewidth * (tiff->samplesperpixel + 2) * 2;
+	srcstride = ((1 + tiff->extrasamples) * tiff->bitspersample + 7) & ~7;
+	if (tiff->stride < 0 || srcstride > (unsigned int)tiff->stride)
+		fz_throw(ctx, FZ_ERROR_GENERIC, "insufficient data for format");
+
+	stride = tiff->imagewidth * (3 + !!tiff->extrasamples) * 2;
 
 	samples = Memento_label(fz_malloc(ctx, (size_t)stride * tiff->imagelength), "tiff_samples");
 
 	for (y = 0; y < tiff->imagelength; y++)
 	{
+		int s = 0;
 		src = tiff->samples + (unsigned int)(tiff->stride * y);
 		dst = samples + (unsigned int)(stride * y);
 
 		for (x = 0; x < tiff->imagewidth; x++)
 		{
+			int c = tiff_getcomp(src, s++, tiff->bitspersample);
+			*dst++ = tiff->colormap[c + 0] >> 8;
+			*dst++ = tiff->colormap[c + 0];
+			*dst++ = tiff->colormap[c + maxval] >> 8;
+			*dst++ = tiff->colormap[c + maxval];
+			*dst++ = tiff->colormap[c + maxval * 2] >> 8;
+			*dst++ = tiff->colormap[c + maxval * 2];
 			if (tiff->extrasamples)
 			{
-				int c = tiff_getcomp(src, x * 2, tiff->bitspersample);
-				int a = tiff_getcomp(src, x * 2 + 1, tiff->bitspersample);
-				*dst++ = tiff->colormap[c + 0] >> 8;
-				*dst++ = tiff->colormap[c + 0];
-				*dst++ = tiff->colormap[c + maxval] >> 8;
-				*dst++ = tiff->colormap[c + maxval];
-				*dst++ = tiff->colormap[c + maxval * 2] >> 8;
-				*dst++ = tiff->colormap[c + maxval * 2];
+				/* Assume the first is alpha, and skip the rest. */
+				int a = tiff_getcomp(src, s++, tiff->bitspersample);
 				if (tiff->bitspersample <= 16)
-					*dst++ = a << (16 - tiff->bitspersample);
+					a = a << (16 - tiff->bitspersample);
 				else
-					*dst++ = a >> (tiff->bitspersample - 16);
-			}
-			else
-			{
-				int c = tiff_getcomp(src, x, tiff->bitspersample);
-				*dst++ = tiff->colormap[c + 0] >> 8;
-				*dst++ = tiff->colormap[c + 0];
-				*dst++ = tiff->colormap[c + maxval] >> 8;
-				*dst++ = tiff->colormap[c + maxval];
-				*dst++ = tiff->colormap[c + maxval * 2] >> 8;
-				*dst++ = tiff->colormap[c + maxval * 2];
+					a = a >> (tiff->bitspersample - 16);
+				*dst++ = a >> 8;
+				*dst++ = a;
+				s += tiff->extrasamples-1;
 			}
 		}
 	}

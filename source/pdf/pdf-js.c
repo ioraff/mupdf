@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -51,20 +73,20 @@ static pdf_js *unpack_arguments(js_State *J, ...)
 static void app_alert(js_State *J)
 {
 	pdf_js *js = unpack_arguments(J, "cMsg", "nIcon", "nType", "cTitle", 0);
-	pdf_alert_event event;
+	pdf_alert_event evt;
 
-	event.message = js_tostring(J, 1);
-	event.icon_type = js_tointeger(J, 2);
-	event.button_group_type = js_tointeger(J, 3);
-	event.title = js_isdefined(J, 4) ? js_tostring(J, 4) : "PDF Alert";
-	event.button_pressed = 0; /* WIP WIP WIP IS THIS CORRECT? */
+	evt.message = js_tostring(J, 1);
+	evt.icon_type = js_tointeger(J, 2);
+	evt.button_group_type = js_tointeger(J, 3);
+	evt.title = js_isdefined(J, 4) ? js_tostring(J, 4) : "PDF Alert";
+	evt.button_pressed = 0; /* WIP WIP WIP IS THIS CORRECT? */
 
 	fz_try(js->ctx)
-		pdf_event_issue_alert(js->ctx, js->doc, &event);
+		pdf_event_issue_alert(js->ctx, js->doc, &evt);
 	fz_catch(js->ctx)
 		rethrow(js);
 
-	js_pushnumber(J, event.button_pressed);
+	js_pushnumber(J, evt.button_pressed);
 }
 
 static void app_execMenuItem(js_State *J)
@@ -114,7 +136,14 @@ static void field_getName(js_State *J)
 		name = pdf_field_name(js->ctx, field);
 	fz_catch(js->ctx)
 		rethrow(js);
-	js_pushstring(J, name);
+	if (js_try(J)) {
+		fz_free(js->ctx, name);
+		js_throw(J);
+	} else {
+		js_pushstring(J, name);
+		js_endtry(J);
+		fz_free(js->ctx, name);
+	}
 }
 
 static void field_setName(js_State *J)
@@ -361,17 +390,17 @@ static void doc_print(js_State *J)
 static void doc_mailDoc(js_State *J)
 {
 	pdf_js *js = unpack_arguments(J, "bUI", "cTo", "cCc", "cBcc", "cSubject", "cMessage", 0);
-	pdf_mail_doc_event event;
+	pdf_mail_doc_event evt;
 
-	event.ask_user = js_isdefined(J, 1) ? js_toboolean(J, 1) : 1;
-	event.to = js_tostring(J, 2);
-	event.cc = js_tostring(J, 3);
-	event.bcc = js_tostring(J, 4);
-	event.subject = js_tostring(J, 5);
-	event.message = js_tostring(J, 6);
+	evt.ask_user = js_isdefined(J, 1) ? js_toboolean(J, 1) : 1;
+	evt.to = js_tostring(J, 2);
+	evt.cc = js_tostring(J, 3);
+	evt.bcc = js_tostring(J, 4);
+	evt.subject = js_tostring(J, 5);
+	evt.message = js_tostring(J, 6);
 
 	fz_try(js->ctx)
-		pdf_event_issue_mail_doc(js->ctx, js->doc, &event);
+		pdf_event_issue_mail_doc(js->ctx, js->doc, &evt);
 	fz_catch(js->ctx)
 		rethrow(js);
 }
@@ -387,13 +416,14 @@ static void doc_calculateNow(js_State *J)
 
 static void console_println(js_State *J)
 {
+	pdf_js *js = js_getcontext(J);
 	int i, top = js_gettop(J);
 	for (i = 1; i < top; ++i) {
 		const char *s = js_tostring(J, i);
-		if (i > 1) putchar(' ');
-		fputs(s, stdout);
+		if (i > 1) fz_write_byte(js->ctx, fz_stddbg(js->ctx), ' ');
+		fz_write_string(js->ctx, fz_stddbg(js->ctx), s);
 	}
-	putchar('\n');
+	fz_write_byte(js->ctx, fz_stddbg(js->ctx), '\n');
 	js_pushundefined(J);
 }
 
@@ -403,6 +433,9 @@ static void util_printf_d(fz_context *ctx, fz_buffer *out, int ds, int sign, int
 	char buf[50];
 	unsigned int a, i;
 	int m = 0;
+
+	if (w > sizeof buf)
+		w = sizeof buf;
 
 	if (value < 0)
 	{
@@ -798,12 +831,17 @@ static void pdf_js_load_document_level(pdf_js *js)
 	pdf_document *doc = js->doc;
 	pdf_obj *javascript;
 	int len, i;
+	int in_op = 0;
 
 	javascript = pdf_load_name_tree(ctx, doc, PDF_NAME(JavaScript));
 	len = pdf_dict_len(ctx, javascript);
 
+	fz_var(in_op);
+
 	fz_try(ctx)
 	{
+		pdf_begin_operation(ctx, doc, "Document level Javascript");
+		in_op = 1;
 		for (i = 0; i < len; i++)
 		{
 			pdf_obj *fragment = pdf_dict_get_val(ctx, javascript, i);
@@ -819,7 +857,11 @@ static void pdf_js_load_document_level(pdf_js *js)
 		}
 	}
 	fz_always(ctx)
+	{
+		if (in_op)
+			pdf_end_operation(ctx, doc);
 		pdf_drop_obj(ctx, javascript);
+	}
 	fz_catch(ctx)
 		fz_rethrow(ctx);
 }
@@ -860,18 +902,39 @@ int pdf_js_event_result(pdf_js *js)
 	return rc;
 }
 
-void pdf_js_event_init_keystroke(pdf_js *js, pdf_obj *target, pdf_keystroke_event *event)
+int pdf_js_event_result_validate(pdf_js *js, char **newtext)
+{
+	int rc = 1;
+	*newtext = NULL;
+	if (js)
+	{
+		js_getglobal(js->imp, "event");
+		js_getproperty(js->imp, -1, "rc");
+		rc = js_tryboolean(js->imp, -1, 1);
+		js_pop(js->imp, 1);
+		if (rc)
+		{
+			js_getproperty(js->imp, -1, "value");
+			*newtext = fz_strdup(js->ctx, js_trystring(js->imp, -1, ""));
+			js_pop(js->imp, 1);
+		}
+		js_pop(js->imp, 1);
+	}
+	return rc;
+}
+
+void pdf_js_event_init_keystroke(pdf_js *js, pdf_obj *target, pdf_keystroke_event *evt)
 {
 	if (js)
 	{
-		pdf_js_event_init(js, target, event->value, event->willCommit);
+		pdf_js_event_init(js, target, evt->value, evt->willCommit);
 		js_getglobal(js->imp, "event");
 		{
-			js_pushstring(js->imp, event->change);
+			js_pushstring(js->imp, evt->change);
 			js_setproperty(js->imp, -2, "change");
-			js_pushnumber(js->imp, event->selStart);
+			js_pushnumber(js->imp, evt->selStart);
 			js_setproperty(js->imp, -2, "selStart");
-			js_pushnumber(js->imp, event->selEnd);
+			js_pushnumber(js->imp, evt->selEnd);
 			js_setproperty(js->imp, -2, "selEnd");
 		}
 		js_pop(js->imp, 1);
@@ -892,6 +955,9 @@ int pdf_js_event_result_keystroke(pdf_js *js, pdf_keystroke_event *evt)
 			{
 				js_getproperty(js->imp, -1, "change");
 				evt->newChange = fz_strdup(js->ctx, js_trystring(js->imp, -1, ""));
+				js_pop(js->imp, 1);
+				js_getproperty(js->imp, -1, "value");
+				evt->newValue = fz_strdup(js->ctx, js_trystring(js->imp, -1, ""));
 				js_pop(js->imp, 1);
 				js_getproperty(js->imp, -1, "selStart");
 				evt->selStart = js_tryinteger(js->imp, -1, 0);
@@ -921,23 +987,34 @@ char *pdf_js_event_value(pdf_js *js)
 
 void pdf_js_execute(pdf_js *js, const char *name, const char *source)
 {
-	if (js)
+	fz_context *ctx;
+
+	if (!js)
+		return;
+
+	ctx = js->ctx;
+	pdf_begin_implicit_operation(js->ctx, js->doc);
+	fz_try(ctx)
 	{
 		if (js_ploadstring(js->imp, name, source))
 		{
-			fz_warn(js->ctx, "%s", js_trystring(js->imp, -1, "Error"));
-			js_pop(js->imp, 1);
-			return;
+			fz_warn(ctx, "%s", js_trystring(js->imp, -1, "Error"));
+			break;
 		}
 		js_pushundefined(js->imp);
 		if (js_pcall(js->imp, 0))
 		{
-			fz_warn(js->ctx, "%s", js_trystring(js->imp, -1, "Error"));
-			js_pop(js->imp, 1);
-			return;
+			fz_warn(ctx, "%s", js_trystring(js->imp, -1, "Error"));
+			break;
 		}
-		js_pop(js->imp, 1);
 	}
+	fz_always(ctx)
+	{
+		js_pop(js->imp, 1);
+		pdf_end_operation(js->ctx, js->doc);
+	}
+	fz_catch(ctx)
+		fz_rethrow(ctx);
 }
 
 void pdf_enable_js(fz_context *ctx, pdf_document *doc)
@@ -967,10 +1044,11 @@ void pdf_enable_js(fz_context *ctx, pdf_document *doc) { }
 void pdf_disable_js(fz_context *ctx, pdf_document *doc) { }
 int pdf_js_supported(fz_context *ctx, pdf_document *doc) { return 0; }
 void pdf_js_event_init(pdf_js *js, pdf_obj *target, const char *value, int willCommit) { }
-void pdf_js_event_init_keystroke(pdf_js *js, pdf_obj *target, pdf_keystroke_event *event) { }
+void pdf_js_event_init_keystroke(pdf_js *js, pdf_obj *target, pdf_keystroke_event *evt) { }
 int pdf_js_event_result_keystroke(pdf_js *js, pdf_keystroke_event *evt) { return 1; }
 int pdf_js_event_result(pdf_js *js) { return 1; }
 char *pdf_js_event_value(pdf_js *js) { return ""; }
 void pdf_js_execute(pdf_js *js, const char *name, const char *source) { }
+int pdf_js_event_result_validate(pdf_js *js, char **newvalue) { *newvalue=NULL; return 1; }
 
 #endif /* FZ_ENABLE_JS */

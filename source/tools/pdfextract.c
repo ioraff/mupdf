@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * pdfextract -- the ultimate way to extract images and fonts from pdfs
  */
@@ -11,15 +33,17 @@
 static pdf_document *doc = NULL;
 static fz_context *ctx = NULL;
 static int dorgb = 0;
+static int doalpha = 0;
 static int doicc = 1;
 
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr, "usage: mutool extract [options] file.pdf [object numbers]\n");
 	fprintf(stderr, "\t-p\tpassword\n");
 	fprintf(stderr, "\t-r\tconvert images to rgb\n");
+	fprintf(stderr, "\t-a\tembed SMasks as alpha channel\n");
 	fprintf(stderr, "\t-N\tdo not use ICC color conversions\n");
-	exit(1);
+	return 1;
 }
 
 static int isimage(pdf_obj *obj)
@@ -89,6 +113,7 @@ static void saveimage(pdf_obj *ref)
 {
 	fz_image *image = NULL;
 	fz_pixmap *pix = NULL;
+	fz_pixmap *mask = NULL;
 	char buf[32];
 	fz_compressed_buffer *cbuf;
 	int type;
@@ -125,12 +150,27 @@ static void saveimage(pdf_obj *ref)
 		else
 		{
 			pix = fz_get_pixmap_from_image(ctx, image, NULL, NULL, 0, 0);
+			if (image->mask && doalpha)
+			{
+				mask = fz_get_pixmap_from_image(ctx, image->mask, NULL, NULL, 0, 0);
+				if (mask->w == pix->w && mask->h == pix->h)
+				{
+					fz_pixmap *apix = fz_new_pixmap_from_color_and_mask(ctx, pix, mask);
+					fz_drop_pixmap(ctx, pix);
+					pix = apix;
+				}
+				else
+				{
+					fz_warn(ctx, "cannot combine image with smask if different resolution");
+				}
+			}
 			writepixmap(pix, buf);
 		}
 	}
 	fz_always(ctx)
 	{
 		fz_drop_image(ctx, image);
+		fz_drop_pixmap(ctx, mask);
 		fz_drop_pixmap(ctx, pix);
 	}
 	fz_catch(ctx)
@@ -239,19 +279,20 @@ int pdfextract_main(int argc, char **argv)
 	char *password = "";
 	int c, o;
 
-	while ((c = fz_getopt(argc, argv, "p:rN")) != -1)
+	while ((c = fz_getopt(argc, argv, "p:raN")) != -1)
 	{
 		switch (c)
 		{
 		case 'p': password = fz_optarg; break;
 		case 'r': dorgb++; break;
+		case 'a': doalpha++; break;
 		case 'N': doicc^=1; break;
-		default: usage(); break;
+		default: return usage();
 		}
 	}
 
 	if (fz_optind == argc)
-		usage();
+		return usage();
 
 	infile = argv[fz_optind++];
 

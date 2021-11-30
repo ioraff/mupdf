@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include <string.h>
@@ -274,6 +296,8 @@ fz_drop_document(fz_context *ctx, fz_document *doc)
 {
 	if (fz_drop_imp(ctx, doc, &doc->refs))
 	{
+		if (doc->open)
+			fz_warn(ctx, "There are still open pages in the document!");
 		if (doc->drop_document)
 			doc->drop_document(ctx, doc);
 		fz_free(ctx, doc);
@@ -524,8 +548,9 @@ fz_load_chapter_page(fz_context *ctx, fz_document *doc, int chapter, int number)
 	for (page = doc->open; page; page = page->next)
 		if (page->chapter == chapter && page->number == number)
 		{
+			fz_keep_page_locked(ctx, page);
 			fz_unlock(ctx, FZ_LOCK_ALLOC);
-			return fz_keep_page(ctx, page);
+			return page;
 		}
 	fz_unlock(ctx, FZ_LOCK_ALLOC);
 
@@ -630,10 +655,11 @@ fz_run_page(fz_context *ctx, fz_page *page, fz_device *dev, fz_matrix transform,
 }
 
 fz_page *
-fz_new_page_of_size(fz_context *ctx, int size)
+fz_new_page_of_size(fz_context *ctx, int size, fz_document *doc)
 {
 	fz_page *page = Memento_label(fz_calloc(ctx, 1, size), "fz_page");
 	page->refs = 1;
+	page->doc = fz_keep_document(ctx, doc);
 	return page;
 }
 
@@ -641,6 +667,12 @@ fz_page *
 fz_keep_page(fz_context *ctx, fz_page *page)
 {
 	return fz_keep_imp(ctx, page, &page->refs);
+}
+
+fz_page *
+fz_keep_page_locked(fz_context *ctx, fz_page *page)
+{
+	return fz_keep_imp_locked(ctx, page, &page->refs);
 }
 
 void
@@ -658,6 +690,8 @@ fz_drop_page(fz_context *ctx, fz_page *page)
 
 		if (page->drop_page)
 			page->drop_page(ctx, page);
+
+		fz_drop_document(ctx, page->doc);
 
 		fz_free(ctx, page);
 	}
@@ -689,4 +723,66 @@ int fz_page_uses_overprint(fz_context *ctx, fz_page *page)
 	if (page && page->overprint)
 		return page->overprint(ctx, page);
 	return 0;
+}
+
+fz_link *fz_create_link(fz_context *ctx, fz_page *page, fz_rect bbox, const char *uri)
+{
+	if (page == NULL)
+		return NULL;
+	if (page->create_link == NULL)
+		fz_throw(ctx, FZ_ERROR_GENERIC, "This format of document does not support creating links");
+	if (uri && !fz_is_external_link(ctx, uri))
+		fz_throw(ctx, FZ_ERROR_GENERIC, "URI should be NULL, or an external link");
+	return page->create_link(ctx, page, bbox, uri);
+}
+
+void *
+fz_process_opened_pages(fz_context *ctx, fz_document *doc, fz_process_opened_page_fn *process_opened_page, void *state)
+{
+	fz_page *page;
+	fz_page *kept = NULL;
+	fz_page *dropme = NULL;
+	void *ret = NULL;
+
+	fz_var(kept);
+	fz_var(dropme);
+	fz_var(page);
+	fz_try(ctx)
+	{
+		/* We can only walk the page list while the alloc lock is taken, so gymnastics are required. */
+		/* Loop invariant: at any point where we might throw, kept != NULL iff we are unlocked. */
+		fz_lock(ctx, FZ_LOCK_ALLOC);
+		for (page = doc->open; ret == NULL && page != NULL; page = page->next)
+		{
+			/* Keep an extra reference to the page so that no other thread can remove it. */
+			kept = fz_keep_page_locked(ctx, page);
+			fz_unlock(ctx, FZ_LOCK_ALLOC);
+			/* Drop any extra reference we might still have to a previous page. */
+			fz_drop_page(ctx, dropme);
+			dropme = NULL;
+
+			ret = process_opened_page(ctx, page, state);
+
+			/* We can't drop kept here, because that would give us a race condition with
+			 * us taking the lock and hoping that 'page' would still be valid. So remember it
+			 * for dropping later. */
+			dropme = kept;
+			kept = NULL;
+			fz_lock(ctx, FZ_LOCK_ALLOC);
+		}
+		/* unlock (and final drop of dropme) happens in the always. */
+	}
+	fz_always(ctx)
+	{
+		if (kept == NULL)
+			fz_unlock(ctx, FZ_LOCK_ALLOC);
+		fz_drop_page(ctx, kept);
+		fz_drop_page(ctx, dropme);
+	}
+	fz_catch(ctx)
+	{
+		fz_rethrow(ctx);
+	}
+
+	return ret;
 }

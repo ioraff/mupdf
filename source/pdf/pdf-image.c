@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -298,6 +320,201 @@ pdf_load_image(fz_context *ctx, pdf_document *doc, pdf_obj *dict)
 	return image;
 }
 
+struct jbig2_segment_header {
+	int number;
+	int flags;
+	/* referred-to-segment numbers */
+	int page;
+	int length;
+};
+
+/* coverity[-tainted_data_return] */
+static uint32_t getu32(const unsigned char *data)
+{
+	return ((uint32_t)data[0]<<24) | ((uint32_t)data[1]<<16) | ((uint32_t)data[2]<<8) | (uint32_t)data[3];
+}
+
+static size_t
+pdf_parse_jbig2_segment_header(fz_context *ctx,
+	const unsigned char *data, const unsigned char *end,
+	struct jbig2_segment_header *info)
+{
+	uint32_t rts;
+	size_t n = 5;
+
+	if (data + 11 > end) return 0;
+
+	info->number = getu32(data);
+	info->flags = data[4];
+
+	rts = (data[5] >> 5) & 0x7;
+	if (rts == 7)
+	{
+		rts = getu32(data+5) & 0x1FFFFFFF;
+		n += 4 + (rts + 1) / 8;
+	}
+	else
+	{
+		n += 1;
+	}
+
+	if (info->number <= 256)
+		n += rts;
+	else if (info->number <= 65536)
+		n += rts * 2;
+	else
+		n += rts * 4;
+
+	if (info->flags & 0x40)
+	{
+		if (data + n + 4 > end) return 0;
+		info->page = getu32(data+n);
+		n += 4;
+	}
+	else
+	{
+		if (data + n + 1 > end) return 0;
+		info->page = data[n];
+		n += 1;
+	}
+
+	if (data + n + 4 > end) return 0;
+	info->length = getu32(data+n);
+	return n + 4;
+}
+
+static void
+pdf_copy_jbig2_segments(fz_context *ctx, fz_buffer *output, const unsigned char *data, size_t size, int page)
+{
+	struct jbig2_segment_header info;
+	const unsigned char *end = data + size;
+	size_t n;
+	int type;
+
+	while (data < end)
+	{
+		n = pdf_parse_jbig2_segment_header(ctx, data, end, &info);
+		if (n == 0)
+			fz_throw(ctx, FZ_ERROR_GENERIC, "truncated jbig2 segment header");
+
+		/* omit end of page, end of file, and segments for other pages */
+		type = (info.flags & 63);
+		if (type == 49 || type == 51 || (info.page > 0 && info.page != page))
+		{
+			data += n;
+			data += info.length;
+		}
+		else
+		{
+			fz_append_data(ctx, output, data, n);
+			data += n;
+			if (data + info.length > end)
+				fz_throw(ctx, FZ_ERROR_GENERIC, "truncated jbig2 segment data");
+			fz_append_data(ctx, output, data, info.length);
+			data += info.length;
+		}
+	}
+}
+
+static void
+pdf_copy_jbig2_random_segments(fz_context *ctx, fz_buffer *output, const unsigned char *data, size_t size, int page)
+{
+	struct jbig2_segment_header info;
+	const unsigned char *header = data;
+	const unsigned char *header_end;
+	const unsigned char *end = data + size;
+	size_t n;
+	int type;
+
+	/* Skip headers until end-of-file segment is found. */
+	while (data < end)
+	{
+		n = pdf_parse_jbig2_segment_header(ctx, data, end, &info);
+		if (n == 0)
+			fz_throw(ctx, FZ_ERROR_GENERIC, "truncated jbig2 segment header");
+		data += n;
+		if ((info.flags & 63) == 51)
+			break;
+	}
+	if (data >= end)
+		fz_throw(ctx, FZ_ERROR_GENERIC, "truncated jbig2 segment header");
+
+	/* Copy segment headers and segment data */
+	header_end = data;
+	while (data < end && header < header_end)
+	{
+		n = pdf_parse_jbig2_segment_header(ctx, header, header_end, &info);
+		if (n == 0)
+			fz_throw(ctx, FZ_ERROR_GENERIC, "truncated jbig2 segment header");
+
+		/* omit end of page, end of file, and segments for other pages */
+		type = (info.flags & 63);
+		if (type == 49 || type == 51 || (info.page > 0 && info.page != page))
+		{
+			header += n;
+			data += info.length;
+		}
+		else
+		{
+			fz_append_data(ctx, output, header, n);
+			header += n;
+			if (data + info.length > end)
+				fz_throw(ctx, FZ_ERROR_GENERIC, "truncated jbig2 segment data");
+			fz_append_data(ctx, output, data, info.length);
+			data += info.length;
+		}
+	}
+}
+
+static fz_buffer *
+pdf_jbig2_stream_from_file(fz_context *ctx, fz_buffer *input, fz_jbig2_globals *globals_, int embedded, int page)
+{
+	fz_buffer *globals = fz_jbig2_globals_data(ctx, globals_);
+	size_t globals_size = globals ? globals->len : 0;
+	fz_buffer *output;
+	int flags;
+	size_t header = 9;
+
+	if (globals_size == 0 && embedded)
+		return fz_keep_buffer(ctx, input);
+
+	if (!embedded)
+	{
+		if (input->len < 9)
+			return NULL; /* not enough data! */
+		flags = input->data[8];
+		if ((flags & 2) == 0)
+		{
+			if (input->len < 13)
+				return NULL; /* not enough data! */
+			header = 13;
+		}
+	}
+
+	output = fz_new_buffer(ctx, input->len + globals_size);
+	fz_try(ctx)
+	{
+		if (globals_size > 0)
+			fz_append_buffer(ctx, output, globals);
+		if (embedded)
+			fz_append_buffer(ctx, output, input);
+		else
+		{
+			if ((flags & 1) == 0)
+				pdf_copy_jbig2_random_segments(ctx, output, input->data + header, input->len - header, page);
+			else
+				pdf_copy_jbig2_segments(ctx, output, input->data + header, input->len - header, page);
+		}
+	}
+	fz_catch(ctx)
+	{
+		fz_drop_buffer(ctx, output);
+		fz_rethrow(ctx);
+	}
+
+	return output;
+}
+
 pdf_obj *
 pdf_add_image(fz_context *ctx, pdf_document *doc, fz_image *image)
 {
@@ -306,6 +523,8 @@ pdf_add_image(fz_context *ctx, pdf_document *doc, fz_image *image)
 	pdf_obj *dp;
 	fz_buffer *buffer = NULL;
 	fz_compressed_buffer *cbuffer;
+	fz_pixmap *smask_pixmap = NULL;
+	fz_image *smask_image = NULL;
 	int i, n;
 
 	/* If we can maintain compression, do so */
@@ -314,6 +533,8 @@ pdf_add_image(fz_context *ctx, pdf_document *doc, fz_image *image)
 	fz_var(pixmap);
 	fz_var(buffer);
 	fz_var(imobj);
+	fz_var(smask_pixmap);
+	fz_var(smask_image);
 
 	imobj = pdf_add_new_dict(ctx, doc, 3);
 	fz_try(ctx)
@@ -340,6 +561,15 @@ pdf_add_image(fz_context *ctx, pdf_document *doc, fz_image *image)
 				if (cp->u.jpx.smask_in_data)
 					pdf_dict_put_int(ctx, dp, PDF_NAME(SMaskInData), cp->u.jpx.smask_in_data);
 				pdf_dict_put(ctx, imobj, PDF_NAME(Filter), PDF_NAME(JPXDecode));
+				break;
+			case FZ_IMAGE_JBIG2:
+				buffer = pdf_jbig2_stream_from_file(ctx, cbuffer->buffer,
+					cp->u.jbig2.globals,
+					cp->u.jbig2.embedded,
+					1);
+				if (!buffer)
+					goto unknown_compression;
+				pdf_dict_put(ctx, imobj, PDF_NAME(Filter), PDF_NAME(JBIG2Decode));
 				break;
 			case FZ_IMAGE_FAX:
 				if (cp->u.fax.columns)
@@ -396,7 +626,8 @@ pdf_add_image(fz_context *ctx, pdf_document *doc, fz_image *image)
 			pdf_dict_put_int(ctx, imobj, PDF_NAME(Width), image->w);
 			pdf_dict_put_int(ctx, imobj, PDF_NAME(Height), image->h);
 
-			buffer = fz_keep_buffer(ctx, cbuffer->buffer);
+			if (!buffer)
+				buffer = fz_keep_buffer(ctx, cbuffer->buffer);
 
 			if (image->use_decode)
 			{
@@ -460,23 +691,57 @@ unknown_compression:
 				}
 				else
 				{
-					/* Need to remove the alpha and spot planes. */
-					/* TODO: extract alpha plane to a soft mask. */
+					size_t line_skip;
+					int skip;
+
+					/* Need to extract the alpha into a SMask and remove spot planes. */
 					/* TODO: convert spots to colors. */
 
-					int line_skip = pixmap->stride - pixmap->w * pixmap->n;
-					int skip = pixmap->n - n;
-					while (h--)
+					if (pixmap->alpha && !image->mask)
 					{
-						int w = pixmap->w;
-						while (w--)
+						smask_pixmap = fz_new_pixmap_from_alpha_channel(ctx, pixmap);
+						smask_image = fz_new_image_from_pixmap(ctx, smask_pixmap, NULL);
+						pdf_dict_put_drop(ctx, imobj, PDF_NAME(SMask), pdf_add_image(ctx, doc, smask_image));
+						fz_drop_image(ctx, smask_image);
+						smask_image = NULL;
+						fz_drop_pixmap(ctx, smask_pixmap);
+						smask_pixmap = NULL;
+					}
+
+					line_skip = pixmap->stride - pixmap->w * (size_t)pixmap->n;
+					skip = pixmap->n - n;
+					if (pixmap->alpha)
+					{
+						int n1 = pixmap->n-1;
+						while (h--)
 						{
-							int k;
-							for (k = 0; k < n; ++k)
-								*d++ = *s++;
-							s += skip;
+							int w = pixmap->w;
+							while (w--)
+							{
+								int a = s[n1];
+								int inva = a ? 255 * 256 / a : 0;
+								int k;
+								for (k = 0; k < n; k++)
+									*d++ = (*s++ * inva) >> 8;
+								s += skip;
+							}
+							s += line_skip;
 						}
-						s += line_skip;
+					}
+					else
+					{
+						while (h--)
+						{
+							int w = pixmap->w;
+							while (w--)
+							{
+								int k;
+								for (k = 0; k < n; ++k)
+									*d++ = *s++;
+								s += skip;
+							}
+							s += line_skip;
+						}
 					}
 				}
 			}
@@ -559,6 +824,8 @@ unknown_compression:
 	}
 	fz_always(ctx)
 	{
+		fz_drop_image(ctx, smask_image);
+		fz_drop_pixmap(ctx, smask_pixmap);
 		fz_drop_pixmap(ctx, pixmap);
 		fz_drop_buffer(ctx, buffer);
 	}

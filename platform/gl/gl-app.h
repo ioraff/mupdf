@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #ifndef MUPDF_GL_APP_H
 #define MUPDF_GL_APP_H
 
@@ -86,10 +108,12 @@ struct ui
 	const void *hot, *active, *focus;
 	int last_cursor, cursor;
 
+	float scale;
 	int fontsize;
 	int baseline;
 	int lineheight;
 	int gridsize;
+	int padsize;
 
 	struct layout *layout;
 	fz_irect *cavity;
@@ -100,10 +124,13 @@ struct ui
 	GLuint overlay_list;
 
 	void (*dialog)(void);
+
+	pdf_annot *selected_annot;
 };
 
 extern struct ui ui;
 
+void ui_init_dpi(float override_ui_scale);
 void ui_init(int w, int h, const char *title);
 void ui_quit(void);
 void ui_invalidate(void);
@@ -149,6 +176,7 @@ struct input
 	char text[16*1024];
 	char *end, *p, *q;
 	int scroll;
+	pdf_annot *widget;
 };
 
 struct list
@@ -210,12 +238,14 @@ int ui_popup_item_aux(const char *title, int flags);
 void ui_popup_end(void);
 
 void ui_init_open_file(const char *dir, int (*filter)(const char *fn));
-int ui_open_file(char filename[], const char *label);
+int ui_open_file(char *filename, const char *label);
 void ui_init_save_file(const char *path, int (*filter)(const char *fn));
-int ui_save_file(char filename[], void (*extra_panel)(void), const char *label);
+int ui_save_file(char *filename, void (*extra_panel)(void), const char *label);
 
 void ui_show_warning_dialog(const char *fmt, ...);
 void ui_show_error_dialog(const char *fmt, ...);
+
+void ui_select_annot(pdf_annot *annot);
 
 /* Theming */
 
@@ -247,7 +277,6 @@ extern fz_context *ctx;
 extern pdf_document *pdf;
 extern pdf_page *page;
 extern fz_stext_page *page_text;
-extern pdf_annot *selected_annot;
 extern fz_matrix draw_page_ctm, view_page_ctm, view_page_inv_ctm;
 extern fz_rect page_bounds, draw_page_bounds, view_page_bounds;
 extern fz_irect view_page_area;
@@ -258,6 +287,8 @@ extern int reloadrequested;
 extern char *search_needle;
 extern int search_hit_count;
 extern fz_quad search_hit_quads[];
+extern int page_contents_changed;
+extern int page_annots_changed;
 
 int search_has_results(void);
 enum {
@@ -272,8 +303,8 @@ void do_annotate_canvas(fz_irect canvas_area);
 void do_redact_panel(void);
 void do_widget_canvas(fz_irect canvas_area);
 void load_page(void);
-void render_page(void);
 void update_title(void);
+void reload_document(void);
 void reload(void);
 void do_save_pdf_file(void);
 void do_save_signed_pdf_file(void);

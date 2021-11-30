@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include "color-imp.h"
@@ -180,7 +202,12 @@ prepare_mesh_vertex(fz_context *ctx, void *arg, fz_vertex *v, const float *input
 	int i;
 
 	if (shade->use_function)
-		output[0] = input[0] * 255;
+	{
+		float f = input[0];
+		if (shade->type >= 4 && shade->type <= 7)
+			f = (f - shade->u.m.c0[0]) / (shade->u.m.c1[0] - shade->u.m.c0[0]);
+		output[0] = f * 255;
+	}
 	else
 	{
 		int n = fz_colorspace_n(ctx, dest->colorspace);
@@ -212,8 +239,41 @@ do_paint_tri(fz_context *ctx, void *arg, fz_vertex *av, fz_vertex *bv, fz_vertex
 	fz_paint_triangle(dest, vertices, 2 + dest->n - dest->alpha, ptd->bbox);
 }
 
+struct fz_shade_color_cache
+{
+	fz_colorspace *src;
+	fz_colorspace *dst;
+	fz_color_params params;
+	int full;
+	fz_color_converter cached;
+	fz_colorspace *src2;
+	fz_colorspace *dst2;
+	fz_color_params params2;
+	int full2;
+	fz_color_converter cached2;
+};
+
 void
-fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_matrix ctm, fz_pixmap *dest, fz_color_params color_params, fz_irect bbox, const fz_overprint *eop)
+fz_drop_shade_color_cache(fz_context *ctx, fz_shade_color_cache *cache)
+{
+	if (cache == NULL)
+		return;
+
+	fz_drop_colorspace(ctx, cache->src);
+	fz_drop_colorspace(ctx, cache->dst);
+	if (cache->full)
+		fz_fin_cached_color_converter(ctx, &cache->cached);
+
+	fz_drop_colorspace(ctx, cache->src2);
+	fz_drop_colorspace(ctx, cache->dst2);
+	if (cache->full2)
+		fz_drop_color_converter(ctx, &cache->cached2);
+
+	fz_free(ctx, cache);
+}
+
+void
+fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_matrix ctm, fz_pixmap *dest, fz_color_params color_params, fz_irect bbox, const fz_overprint *eop, fz_shade_color_cache **color_cache)
 {
 	unsigned char clut[256][FZ_MAX_COLORS];
 	fz_pixmap *temp = NULL;
@@ -223,12 +283,24 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 	struct paint_tri_data ptd = { 0 };
 	int i, k;
 	fz_matrix local_ctm;
+	fz_shade_color_cache *cache = NULL;
+	int recache = 0;
+	int recache2 = 0;
 
 	fz_var(temp);
 	fz_var(conv);
+	fz_var(recache);
+	fz_var(recache2);
 
 	if (colorspace == NULL)
 		colorspace = shade->colorspace;
+
+	if (color_cache)
+	{
+		cache = *color_cache;
+		if (cache == NULL)
+			*color_cache = cache = fz_malloc_struct(ctx, fz_shade_color_cache);
+	}
 
 	fz_try(ctx)
 	{
@@ -250,7 +322,33 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 		ptd.bbox = bbox;
 
 		if (temp->colorspace)
-			fz_init_cached_color_converter(ctx, &ptd.cc, colorspace, temp->colorspace, NULL, color_params);
+		{
+			if (cache && cache->full && cache->src == colorspace && cache->dst == temp->colorspace &&
+				cache->params.op == color_params.op &&
+				cache->params.opm == color_params.opm &&
+				cache->params.ri == color_params.ri)
+			{
+				ptd.cc = cache->cached;
+				cache->full = 0;
+			}
+			else
+				fz_init_cached_color_converter(ctx, &ptd.cc, colorspace, temp->colorspace, NULL, color_params);
+
+			/* Drop the existing contents of the cache. */
+			if (cache)
+			{
+				fz_drop_colorspace(ctx, cache->src);
+				cache->src = NULL;
+				fz_drop_colorspace(ctx, cache->dst);
+				cache->dst = NULL;
+				if (cache->full)
+					fz_fin_cached_color_converter(ctx, &cache->cached);
+				cache->full = 0;
+
+				/* Remember that we can put stuff back into the cache. */
+				recache = 1;
+			}
+		}
 
 		fz_process_shade(ctx, shade, local_ctm, fz_rect_from_irect(bbox), prepare_mesh_vertex, &do_paint_tri, &ptd);
 
@@ -292,8 +390,8 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 							*d++ = fz_clampi(255 * f[k], 0, 255);
 						*d++ = a;
 					}
-					d += conv->stride - conv->w * conv->n;
-					s += temp->stride - temp->w * temp->n;
+					d += conv->stride - conv->w * (size_t)conv->n;
+					s += temp->stride - temp->w * (size_t)temp->n;
 				}
 				fz_drop_pixmap(ctx, temp);
 				temp = conv;
@@ -315,7 +413,31 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 
 				if (dest->colorspace)
 				{
-					fz_find_color_converter(ctx, &cc, colorspace, dest->colorspace, NULL, color_params);
+					if (cache && cache->full2 && cache->src2 == colorspace && cache->dst2 == dest->colorspace &&
+						cache->params2.op == color_params.op &&
+						cache->params2.opm == color_params.opm &&
+						cache->params2.ri == color_params.ri)
+					{
+						cc = cache->cached2;
+						cache->full2 = 0;
+					}
+					else
+						fz_find_color_converter(ctx, &cc, colorspace, dest->colorspace, NULL, color_params);
+
+					/* Drop the existing contents of the cache */
+					if (cache)
+					{
+						fz_drop_colorspace(ctx, cache->src2);
+						cache->src2 = NULL;
+						fz_drop_colorspace(ctx, cache->dst2);
+						cache->dst2 = NULL;
+						if (cache->full2)
+							fz_drop_color_converter(ctx, &cache->cached2);
+						cache->full2 = 0;
+
+						/* Remember that we can put stuff back into the cache. */
+						recache2 = 1;
+					}
 					for (i = 0; i < 256; i++)
 					{
 						cc.convert(ctx, &cc, shade->function[i], color);
@@ -325,7 +447,6 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 							clut[i][k] = 0;
 						clut[i][k] = shade->function[i][cn] * 255;
 					}
-					fz_drop_color_converter(ctx, &cc);
 				}
 				else
 				{
@@ -354,8 +475,8 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 						if (da)
 							*d++ = a;
 					}
-					d += conv->stride - conv->w * conv->n;
-					s += temp->stride - temp->w * temp->n;
+					d += conv->stride - conv->w * (size_t)conv->n;
+					s += temp->stride - temp->w * (size_t)temp->n;
 				}
 			}
 			fz_paint_pixmap_with_overprint(dest, conv, eop);
@@ -363,13 +484,31 @@ fz_paint_shade(fz_context *ctx, fz_shade *shade, fz_colorspace *colorspace, fz_m
 	}
 	fz_always(ctx)
 	{
+		if (recache)
+		{
+			cache->src = fz_keep_colorspace(ctx, colorspace);
+			cache->dst = fz_keep_colorspace(ctx, temp->colorspace);
+			cache->params = color_params;
+			cache->cached = ptd.cc;
+			cache->full = 1;
+		}
+		else
+			fz_fin_cached_color_converter(ctx, &ptd.cc);
 		if (shade->use_function)
 		{
-			fz_drop_color_converter(ctx, &cc);
+			if (recache2)
+			{
+				cache->src2 = fz_keep_colorspace(ctx, colorspace);
+				cache->dst2 = fz_keep_colorspace(ctx, dest->colorspace);
+				cache->params2 = color_params;
+				cache->cached2 = cc;
+				cache->full2 = 1;
+			}
+			else
+				fz_drop_color_converter(ctx, &cc);
 			fz_drop_pixmap(ctx, temp);
 			fz_drop_pixmap(ctx, conv);
 		}
-		fz_fin_cached_color_converter(ctx, &ptd.cc);
 	}
 	fz_catch(ctx)
 		fz_rethrow(ctx);

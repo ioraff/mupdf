@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /* Conversion functions: C to Java. These all throw fitz exceptions. */
 
 static inline jobject to_ColorSpace(fz_context *ctx, JNIEnv *env, fz_colorspace *cs)
@@ -310,17 +332,17 @@ static inline jobject to_PDFAnnotation_safe(fz_context *ctx, JNIEnv *env, pdf_an
 	return jannot;
 }
 
-static inline jobject to_PDFObject_safe(fz_context *ctx, JNIEnv *env, jobject pdf, pdf_obj *obj)
+static inline jobject to_PDFObject_safe(fz_context *ctx, JNIEnv *env, pdf_obj *obj)
 {
 	jobject jobj;
 
-	if (!ctx || !pdf) return NULL;
+	if (!ctx) return NULL;
 
 	if (obj == NULL)
 		return (*env)->GetStaticObjectField(env, cls_PDFObject, fid_PDFObject_Null);
 
 	pdf_keep_obj(ctx, obj);
-	jobj = (*env)->NewObject(env, cls_PDFObject, mid_PDFObject_init, jlong_cast(obj), pdf);
+	jobj = (*env)->NewObject(env, cls_PDFObject, mid_PDFObject_init, jlong_cast(obj));
 	if (!jobj)
 		pdf_drop_obj(ctx, obj);
 
@@ -402,7 +424,7 @@ static inline jobjectArray to_StringArray_safe(fz_context *ctx, JNIEnv *env, con
 	return arr;
 }
 
-static inline jobject to_PDFWidget_safe(fz_context *ctx, JNIEnv *env, pdf_widget *widget)
+static inline jobject to_PDFWidget_safe(fz_context *ctx, JNIEnv *env, pdf_annot *widget)
 {
 	jobject jwidget;
 	int nopts;
@@ -422,7 +444,7 @@ static inline jobject to_PDFWidget_safe(fz_context *ctx, JNIEnv *env, pdf_widget
 	fz_try(ctx)
 	{
 		int fieldType = pdf_widget_type(ctx, widget);
-		int fieldFlags = pdf_field_flags(ctx, widget->obj);
+		int fieldFlags = pdf_field_flags(ctx, pdf_annot_obj(ctx, widget));
 		(*env)->SetIntField(env, jwidget, fid_PDFWidget_fieldType, fieldType);
 		(*env)->SetIntField(env, jwidget, fid_PDFWidget_fieldFlags, fieldFlags);
 		if (fieldType == PDF_WIDGET_TYPE_TEXT)
@@ -477,19 +499,6 @@ static inline jobject to_Document_safe_own(fz_context *ctx, JNIEnv *env, fz_docu
 	return obj;
 }
 
-static inline jobject to_Device_safe_own(fz_context *ctx, JNIEnv *env, fz_device *device)
-{
-	jobject jdev;
-
-	if (!ctx || !device) return NULL;
-
-	jdev = (*env)->NewObject(env, cls_DisplayList, mid_Device_init, jlong_cast(device));
-	if (!jdev)
-		fz_drop_device(ctx, device);
-
-	return jdev;
-}
-
 static inline jobject to_DisplayList_safe_own(fz_context *ctx, JNIEnv *env, fz_display_list *list)
 {
 	jobject jlist;
@@ -501,6 +510,19 @@ static inline jobject to_DisplayList_safe_own(fz_context *ctx, JNIEnv *env, fz_d
 		fz_drop_display_list(ctx, list);
 
 	return jlist;
+}
+
+static inline jobject to_NativeDevice_safe_own(fz_context *ctx, JNIEnv *env, fz_device *device)
+{
+	jobject jdev;
+
+	if (!ctx || !device) return NULL;
+
+	jdev = (*env)->NewObject(env, cls_NativeDevice, mid_NativeDevice_init, jlong_cast(device));
+	if (!jdev)
+		fz_drop_device(ctx, device);
+
+	return jdev;
 }
 
 static inline jobject to_Page_safe_own(fz_context *ctx, JNIEnv *env, fz_page *page)
@@ -521,6 +543,35 @@ static inline jobject to_Page_safe_own(fz_context *ctx, JNIEnv *env, fz_page *pa
 	return jobj;
 }
 
+static inline jobject to_Link_safe_own(fz_context *ctx, JNIEnv *env, fz_link *link)
+{
+	jobject jobj;
+	jobject jbounds = NULL;
+	jobject juri = NULL;
+
+	if (!ctx || !link) return NULL;
+
+	jbounds = to_Rect_safe(ctx, env, link->rect);
+	if (!jbounds || (*env)->ExceptionCheck(env))
+	{
+		fz_drop_link(ctx, link);
+		return NULL;
+	}
+
+	juri = (*env)->NewStringUTF(env, link->uri);
+	if (!juri || (*env)->ExceptionCheck(env))
+	{
+		fz_drop_link(ctx, link);
+		return NULL;
+	}
+
+	jobj = (*env)->NewObject(env, cls_Link, mid_Link_init, jbounds, juri);
+	if (!jobj)
+		fz_drop_link(ctx, link);
+
+	return jobj;
+}
+
 static inline jobject to_PDFAnnotation_safe_own(fz_context *ctx, JNIEnv *env, pdf_annot *annot)
 {
 	jobject jannot;
@@ -532,6 +583,19 @@ static inline jobject to_PDFAnnotation_safe_own(fz_context *ctx, JNIEnv *env, pd
 		pdf_drop_annot(ctx, annot);
 
 	return jannot;
+}
+
+static inline jobject to_PDFWidget_safe_own(fz_context *ctx, JNIEnv *env, pdf_annot *widget)
+{
+	jobject jwidget;
+
+	if (!ctx || !widget) return NULL;
+
+	jwidget = (*env)->NewObject(env, cls_PDFWidget, mid_PDFWidget_init, jlong_cast(widget));
+	if (!jwidget)
+		pdf_drop_annot(ctx, widget);
+
+	return jwidget;
 }
 
 static inline jobject to_PDFGraftMap_safe_own(fz_context *ctx, JNIEnv *env, jobject pdf, pdf_graft_map *map)
@@ -547,13 +611,13 @@ static inline jobject to_PDFGraftMap_safe_own(fz_context *ctx, JNIEnv *env, jobj
 	return jmap;
 }
 
-static inline jobject to_PDFObject_safe_own(fz_context *ctx, JNIEnv *env, jobject pdf, pdf_obj *obj)
+static inline jobject to_PDFObject_safe_own(fz_context *ctx, JNIEnv *env, pdf_obj *obj)
 {
 	jobject jobj;
 
-	if (!ctx || !obj || !pdf) return NULL;
+	if (!ctx || !obj) return NULL;
 
-	jobj = (*env)->NewObject(env, cls_PDFObject, mid_PDFObject_init, jlong_cast(obj), pdf);
+	jobj = (*env)->NewObject(env, cls_PDFObject, mid_PDFObject_init, jlong_cast(obj));
 	if (!jobj)
 		pdf_drop_obj(ctx, obj);
 
@@ -969,10 +1033,10 @@ static inline pdf_obj *from_PDFObject_safe(JNIEnv *env, jobject jobj)
 	return CAST(pdf_obj *, (*env)->GetLongField(env, jobj, fid_PDFObject_pointer));
 }
 
-static inline pdf_widget *from_PDFWidget_safe(JNIEnv *env, jobject jobj)
+static inline pdf_annot *from_PDFWidget_safe(JNIEnv *env, jobject jobj)
 {
 	if (!jobj) return NULL;
-	return CAST(pdf_widget *, (*env)->GetLongField(env, jobj, fid_PDFWidget_pointer));
+	return CAST(pdf_annot *, (*env)->GetLongField(env, jobj, fid_PDFWidget_pointer));
 }
 
 static inline pdf_pkcs7_signer *from_PKCS7Signer_safe(JNIEnv *env, jobject jobj)

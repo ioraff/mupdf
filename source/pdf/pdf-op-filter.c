@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -583,15 +605,16 @@ walk_string(fz_context *ctx, int uni, int remove, editable_str *str)
 		if (rune == uni)
 		{
 			/* Match. Skip over that one. */
-			str->pos += n;
 		}
-		else if (uni == 32) {
+		else if (uni == 32)
+		{
 			/* We don't care if we're given whitespace
 			 * and it doesn't match the string. Don't
 			 * skip forward. Nothing to remove. */
 			break;
 		}
-		else if (rune == 32) {
+		else if (rune == 32)
+		{
 			/* The string has a whitespace, and we
 			 * don't match it; that's forgivable as
 			 * PDF often misses out spaces. Remove this
@@ -608,6 +631,10 @@ walk_string(fz_context *ctx, int uni, int remove, editable_str *str)
 			len = strlen(s+n);
 			memmove(s, s+n, len+1);
 			str->edited = 1;
+		}
+		else
+		{
+			str->pos += n;
 		}
 	}
 	while (rune != uni);
@@ -636,6 +663,7 @@ mcid_char_imp(fz_context *ctx, pdf_filter_processor *p, tag_record *tr, int uni,
 
 	/* Edit the Alt string */
 	walk_string(ctx, uni, remove, &tr->alt);
+
 	/* Edit the ActualText string */
 	walk_string(ctx, uni, remove, &tr->actualtext);
 
@@ -687,10 +715,12 @@ update_mcid(fz_context *ctx, pdf_filter_processor *p)
 
 	if (tag == NULL)
 		return;
+	if (tag->mcid_obj == NULL)
+		return;
 	if (tag->alt.edited)
-		pdf_dict_put_text_string(ctx, tag->mcid_obj, PDF_NAME(Alt), tag->alt.utf8);
+		pdf_dict_put_text_string(ctx, tag->mcid_obj, PDF_NAME(Alt), tag->alt.utf8 ? tag->alt.utf8 : "");
 	if (tag->actualtext.edited)
-		pdf_dict_put_text_string(ctx, tag->mcid_obj, PDF_NAME(Alt), tag->actualtext.utf8);
+		pdf_dict_put_text_string(ctx, tag->mcid_obj, PDF_NAME(Alt), tag->actualtext.utf8 ? tag->actualtext.utf8 : "");
 }
 
 /* Process a string (from buf, of length len), from position *pos onwards.
@@ -727,8 +757,10 @@ filter_string_to_segment(fz_context *ctx, pdf_filter_processor *p, unsigned char
 		}
 		else
 			remove = filter_show_char(ctx, p, cid, &uni);
+
 		if (cpt == 32 && *inc == 1)
 			filter_show_space(ctx, p, gstate->pending.text.word_space);
+
 		/* For every character we process (whether we remove it
 		 * or not), we consider any MCIDs that are in effect. */
 		mcid_char(ctx, p, uni, remove);
@@ -1442,6 +1474,11 @@ pdf_filter_squote(fz_context *ctx, pdf_processor *proc, char *str, size_t len)
 {
 	/* Note, we convert all T' operators to (maybe) a T* and a Tj */
 	pdf_filter_processor *p = (pdf_filter_processor*)proc;
+
+	/* need to flush text state and clear adjustment before we emit a newline */
+	p->Tm_adjust = 0;
+	filter_flush(ctx, p, FLUSH_ALL);
+
 	pdf_tos_newline(&p->tos, p->gstate->pending.text.leading);
 	/* If Tm_pending, then just adjusting the matrix (as
 	 * pdf_tos_newline has done) is enough. Otherwise we
@@ -1457,6 +1494,11 @@ pdf_filter_dquote(fz_context *ctx, pdf_processor *proc, float aw, float ac, char
 	/* Note, we convert all T" operators to (maybe) a T*,
 	 * (maybe) Tc, (maybe) Tw and a Tj. */
 	pdf_filter_processor *p = (pdf_filter_processor*)proc;
+
+	/* need to flush text state and clear adjustment before we emit a newline */
+	p->Tm_adjust = 0;
+	filter_flush(ctx, p, FLUSH_ALL);
+
 	p->gstate->pending.text.word_space = aw;
 	p->gstate->pending.text.char_space = ac;
 	pdf_tos_newline(&p->tos, p->gstate->pending.text.leading);

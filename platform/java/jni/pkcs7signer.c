@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /* PKCS7Signer interface */
 
 typedef struct
@@ -27,7 +49,7 @@ static void signer_drop(fz_context *ctx, pdf_pkcs7_signer *signer_)
 		jboolean detach = JNI_FALSE;
 		JNIEnv *env = NULL;
 
-		env = jni_attach_thread(ctx, &detach);
+		env = jni_attach_thread(&detach);
 		if (env == NULL)
 		{
 			fz_warn(ctx, "cannot attach to JVM in signer_drop");
@@ -66,35 +88,35 @@ static char *string_field_to_utfchars(fz_context *ctx, JNIEnv *env, jobject obj,
 	return val;
 }
 
-static pdf_pkcs7_designated_name *signer_designated_name(fz_context *ctx, pdf_pkcs7_signer *signer_)
+static pdf_pkcs7_distinguished_name *signer_distinguished_name(fz_context *ctx, pdf_pkcs7_signer *signer_)
 {
 	java_pkcs7_signer *signer = (java_pkcs7_signer *)signer_;
-	pdf_pkcs7_designated_name *name = NULL;
+	pdf_pkcs7_distinguished_name *name = NULL;
 	jboolean detach = JNI_FALSE;
 	jobject desname = NULL;
 	JNIEnv *env = NULL;
 
 	if (signer == NULL) return NULL;
 
-	env = jni_attach_thread(ctx, &detach);
+	env = jni_attach_thread(&detach);
 	if (env == NULL)
-		fz_throw(ctx, FZ_ERROR_GENERIC, "cannot attach to JVM in pdf_pkcs7_designated_name");
+		fz_throw(ctx, FZ_ERROR_GENERIC, "cannot attach to JVM in pdf_pkcs7_distinguished_name");
 
 	desname = (*env)->CallObjectMethod(env, signer->java_signer, mid_PKCS7Signer_name);
 	if ((*env)->ExceptionCheck(env))
 		fz_throw_java_and_detach_thread(ctx, env, detach);
 	if (desname == NULL)
-		fz_throw_and_detach_thread(ctx, detach, FZ_ERROR_GENERIC, "cannot retrieve designated name");
+		fz_throw_and_detach_thread(ctx, detach, FZ_ERROR_GENERIC, "cannot retrieve distinguished name");
 
 	fz_var(name);
 	fz_try(ctx)
 	{
-		name = Memento_label(fz_calloc(ctx, 1, sizeof(*name)), "designated name");
-		name->cn = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DesignatedName_cn);
-		name->o = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DesignatedName_o);
-		name->ou = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DesignatedName_ou);
-		name->email = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DesignatedName_email);
-		name->c = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DesignatedName_c);
+		name = Memento_label(fz_calloc(ctx, 1, sizeof(*name)), "distinguished name");
+		name->cn = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DistinguishedName_cn);
+		name->o = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DistinguishedName_o);
+		name->ou = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DistinguishedName_ou);
+		name->email = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DistinguishedName_email);
+		name->c = string_field_to_utfchars(ctx, env, desname, fid_PKCS7DistinguishedName_c);
 	}
 	fz_catch(ctx)
 	{
@@ -119,7 +141,7 @@ static size_t signer_max_digest_size(fz_context *ctx, pdf_pkcs7_signer *signer_)
 	size_t max_digest = 0;
 	int len;
 
-	JNIEnv *env = jni_attach_thread(ctx, &detach);
+	JNIEnv *env = jni_attach_thread(&detach);
 	if (env == NULL)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "cannot attach to JVM in signer_max_digest_size");
 
@@ -145,7 +167,7 @@ static int signer_create_digest(fz_context *ctx, pdf_pkcs7_signer *signer_, fz_s
 	jobject jstm;
 	int result = 1;
 
-	JNIEnv *env = jni_attach_thread(ctx, &detach);
+	JNIEnv *env = jni_attach_thread(&detach);
 	if (env == NULL)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "cannot attach to JVM in signer_create_digest");
 
@@ -193,7 +215,7 @@ static pdf_pkcs7_signer *pdf_pkcs7_java_signer_create(JNIEnv *env, fz_context *c
 
 	signer->base.keep = signer_keep;
 	signer->base.drop = signer_drop;
-	signer->base.get_signing_name = signer_designated_name;
+	signer->base.get_signing_name = signer_distinguished_name;
 	signer->base.max_digest_size = signer_max_digest_size;
 	signer->base.create_digest = signer_create_digest;
 	signer->refs = 1;

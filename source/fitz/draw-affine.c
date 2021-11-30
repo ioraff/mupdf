@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "draw-imp.h"
 
@@ -3885,7 +3907,6 @@ fz_paint_image_imp(fz_context *ctx,
 	const byte *color,
 	int alpha,
 	int lerp_allowed,
-	int as_tiled,
 	const fz_overprint *eop)
 {
 	byte *dp, *sp, *hp, *gp;
@@ -3899,9 +3920,6 @@ fz_paint_image_imp(fz_context *ctx,
 
 	if (alpha == 0)
 		return;
-
-	/* grid fit the image */
-	ctm = fz_gridfit_matrix(as_tiled, ctm);
 
 	/* turn on interpolation for upscaled and non-rectilinear transforms */
 	dolerp = 0;
@@ -3940,15 +3958,17 @@ fz_paint_image_imp(fz_context *ctx,
 		w = shape->x + shape->w;
 	if (group_alpha && group_alpha->x + group_alpha->w < w)
 		w = group_alpha->x + group_alpha->w;
+	if (w <= x)
+		return;
 	w -= x;
 	h = bbox.y1;
 	if (shape && shape->y + shape->h < h)
 		h = shape->y + shape->h;
 	if (group_alpha && group_alpha->y + group_alpha->h < h)
 		h = group_alpha->y + group_alpha->h;
-	h -= y;
-	if (w <= 0 || h <= 0)
+	if (h <= y)
 		return;
+	h -= y;
 
 	/* map from screen space (x,y) to image space (u,v) */
 	ctm = fz_pre_scale(ctm, 1.0f / img->w, 1.0f / img->h);
@@ -3967,7 +3987,7 @@ fz_paint_image_imp(fz_context *ctx,
 	u = (int)((ctm.a * x) + (ctm.c * y) + ctm.e + ((ctm.a + ctm.c) * .5f));
 	v = (int)((ctm.b * x) + (ctm.d * y) + ctm.f + ((ctm.b + ctm.d) * .5f));
 
-	dp = dst->samples + (unsigned int)((y - dst->y) * dst->stride + (x - dst->x) * dst->n);
+	dp = dst->samples + (y - dst->y) * (size_t)dst->stride + (x - dst->x) * (size_t)dst->n;
 	da = dst->alpha;
 	dn = dst->n - da;
 	sp = img->samples;
@@ -3979,7 +3999,7 @@ fz_paint_image_imp(fz_context *ctx,
 	if (shape)
 	{
 		hs = shape->stride;
-		hp = shape->samples + (unsigned int)((y - shape->y) * shape->stride + x - shape->x);
+		hp = shape->samples + (y - shape->y) * (size_t)shape->stride + x - shape->x;
 	}
 	else
 	{
@@ -3989,7 +4009,7 @@ fz_paint_image_imp(fz_context *ctx,
 	if (group_alpha)
 	{
 		gs = group_alpha->stride;
-		gp = group_alpha->samples + (unsigned int)((y - group_alpha->y) * group_alpha->stride + x - group_alpha->x);
+		gp = group_alpha->samples + (y - group_alpha->y) * (size_t)group_alpha->stride + x - group_alpha->x;
 	}
 	else
 	{
@@ -4087,14 +4107,14 @@ fz_paint_image_imp(fz_context *ctx,
 }
 
 void
-fz_paint_image_with_color(fz_context *ctx, fz_pixmap * FZ_RESTRICT dst, const fz_irect * FZ_RESTRICT scissor, fz_pixmap * FZ_RESTRICT shape, fz_pixmap * FZ_RESTRICT group_alpha, fz_pixmap * FZ_RESTRICT img, fz_matrix ctm, const byte * FZ_RESTRICT color, int lerp_allowed, int as_tiled, const fz_overprint * FZ_RESTRICT eop)
+fz_paint_image_with_color(fz_context *ctx, fz_pixmap * FZ_RESTRICT dst, const fz_irect * FZ_RESTRICT scissor, fz_pixmap * FZ_RESTRICT shape, fz_pixmap * FZ_RESTRICT group_alpha, fz_pixmap * FZ_RESTRICT img, fz_matrix ctm, const byte * FZ_RESTRICT color, int lerp_allowed, const fz_overprint * FZ_RESTRICT eop)
 {
 	assert(img->n == 1);
-	fz_paint_image_imp(ctx, dst, scissor, shape, group_alpha, img, ctm, color, 255, lerp_allowed, as_tiled, eop);
+	fz_paint_image_imp(ctx, dst, scissor, shape, group_alpha, img, ctm, color, 255, lerp_allowed, eop);
 }
 
 void
-fz_paint_image(fz_context *ctx, fz_pixmap * FZ_RESTRICT dst, const fz_irect * FZ_RESTRICT scissor, fz_pixmap * FZ_RESTRICT shape, fz_pixmap * FZ_RESTRICT group_alpha, fz_pixmap * FZ_RESTRICT img, fz_matrix ctm, int alpha, int lerp_allowed, int as_tiled, const fz_overprint * FZ_RESTRICT eop)
+fz_paint_image(fz_context *ctx, fz_pixmap * FZ_RESTRICT dst, const fz_irect * FZ_RESTRICT scissor, fz_pixmap * FZ_RESTRICT shape, fz_pixmap * FZ_RESTRICT group_alpha, fz_pixmap * FZ_RESTRICT img, fz_matrix ctm, int alpha, int lerp_allowed, const fz_overprint * FZ_RESTRICT eop)
 {
-	fz_paint_image_imp(ctx, dst, scissor, shape, group_alpha, img, ctm, NULL, alpha, lerp_allowed, as_tiled, eop);
+	fz_paint_image_imp(ctx, dst, scissor, shape, group_alpha, img, ctm, NULL, alpha, lerp_allowed, eop);
 }

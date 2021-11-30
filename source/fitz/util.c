@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include <float.h>
@@ -310,6 +332,22 @@ fz_new_stext_page_from_page_number(fz_context *ctx, fz_document *doc, int number
 	return text;
 }
 
+fz_stext_page *
+fz_new_stext_page_from_chapter_page_number(fz_context *ctx, fz_document *doc, int chapter, int number, const fz_stext_options *options)
+{
+	fz_page *page;
+	fz_stext_page *text = NULL;
+
+	page = fz_load_chapter_page(ctx, doc, chapter, number);
+	fz_try(ctx)
+		text = fz_new_stext_page_from_page(ctx, page, options);
+	fz_always(ctx)
+		fz_drop_page(ctx, page);
+	fz_catch(ctx)
+		fz_rethrow(ctx);
+	return text;
+}
+
 int
 fz_search_display_list(fz_context *ctx, fz_display_list *list, const char *needle, fz_quad *hit_bbox, int hit_max)
 {
@@ -510,9 +548,9 @@ fz_write_pixmap_as_data_uri(fz_context *ctx, fz_output *out, fz_pixmap *pixmap)
 }
 
 fz_document *
-fz_new_xhtml_document_from_document(fz_context *ctx, fz_document *old_doc)
+fz_new_xhtml_document_from_document(fz_context *ctx, fz_document *old_doc, const fz_stext_options *opts)
 {
-	fz_stext_options opts = { FZ_STEXT_PRESERVE_IMAGES };
+	fz_stext_options default_opts = { FZ_STEXT_PRESERVE_IMAGES | FZ_STEXT_DEHYPHENATE };
 	fz_document *new_doc;
 	fz_buffer *buf = NULL;
 	fz_output *out = NULL;
@@ -525,6 +563,9 @@ fz_new_xhtml_document_from_document(fz_context *ctx, fz_document *old_doc)
 	fz_var(stm);
 	fz_var(text);
 
+	if (!opts)
+		opts = &default_opts;
+
 	fz_try(ctx)
 	{
 		buf = fz_new_buffer(ctx, 8192);
@@ -533,7 +574,7 @@ fz_new_xhtml_document_from_document(fz_context *ctx, fz_document *old_doc)
 
 		for (i = 0; i < fz_count_pages(ctx, old_doc); ++i)
 		{
-			text = fz_new_stext_page_from_page_number(ctx, old_doc, i, &opts);
+			text = fz_new_stext_page_from_page_number(ctx, old_doc, i, opts);
 			fz_print_stext_page_as_xhtml(ctx, out, text, i+1);
 			fz_drop_stext_page(ctx, text);
 			text = NULL;
@@ -544,7 +585,7 @@ fz_new_xhtml_document_from_document(fz_context *ctx, fz_document *old_doc)
 		fz_terminate_buffer(ctx, buf);
 
 		stm = fz_open_buffer(ctx, buf);
-		new_doc = fz_open_document_with_stream(ctx, "application/html+xml", stm);
+		new_doc = fz_open_document_with_stream(ctx, "application/xhtml+xml", stm);
 	}
 	fz_always(ctx)
 	{
@@ -557,4 +598,36 @@ fz_new_xhtml_document_from_document(fz_context *ctx, fz_document *old_doc)
 		fz_rethrow(ctx);
 
 	return new_doc;
+}
+
+fz_buffer *
+fz_new_buffer_from_page_with_format(fz_context *ctx, fz_page *page, const char *format, const char *options, fz_matrix transform, fz_cookie *cookie)
+{
+	fz_buffer *buf = NULL;
+	fz_output *out;
+	fz_document_writer *writer = NULL;
+	fz_device *dev = NULL;
+
+	fz_var(buf);
+	fz_var(writer);
+	fz_var(dev);
+
+	fz_try(ctx)
+	{
+		buf = fz_new_buffer(ctx, 0);
+		out = fz_new_output_with_buffer(ctx, buf);
+		writer = fz_new_document_writer_with_output(ctx, out, format, options);
+		dev = fz_begin_page(ctx, writer, fz_bound_page(ctx, page));
+		fz_run_page(ctx, page, dev, transform, cookie);
+		fz_end_page(ctx, writer);
+		fz_close_document_writer(ctx, writer);
+	}
+	fz_always(ctx)
+		fz_drop_document_writer(ctx, writer);
+	fz_catch(ctx)
+	{
+		fz_drop_buffer(ctx, buf);
+		fz_rethrow(ctx);
+	}
+	return buf;
 }

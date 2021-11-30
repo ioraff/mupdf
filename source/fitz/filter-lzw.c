@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include <assert.h>
@@ -74,16 +96,17 @@ next_lzwd(fz_context *ctx, fz_stream *stm, size_t len)
 		if (lzw->eod)
 			return EOF;
 
+		if (fz_is_eof_bits(ctx, lzw->chain))
+		{
+			fz_warn(ctx, "premature end in lzw decode");
+			lzw->eod = 1;
+			break;
+		}
+
 		if (lzw->reverse_bits)
 			code = fz_read_rbits(ctx, lzw->chain, code_bits);
 		else
 			code = fz_read_bits(ctx, lzw->chain, code_bits);
-
-		if (fz_is_eof_bits(ctx, lzw->chain))
-		{
-			lzw->eod = 1;
-			break;
-		}
 
 		if (code == LZW_EOD(lzw))
 		{

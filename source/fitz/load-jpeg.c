@@ -1,5 +1,28 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
@@ -194,9 +217,28 @@ static fz_colorspace *extract_icc_profile(fz_context *ctx, jpeg_saved_marker_ptr
 #endif
 }
 
-static int extract_exif_resolution(jpeg_saved_marker_ptr marker, int *xres, int *yres)
+/* Returns true if <x> can be represented as an integer without overflow.
+ *
+ * We can't use comparisons such as 'return x < INT_MAX' because INT_MAX is
+ * not safely convertible to float - it ends up as INT_MAX+1 so the comparison
+ * doesn't do what we want.
+ *
+ * Instead we do a round-trip conversion and return true if this differs by
+ * less than 1. This relies on high adjacent float values that differ by more
+ * than 1, actually being exact integers, so the round-trip doesn't change the
+ * value.
+ */
+static int float_can_be_int(float x)
 {
-	int is_big_endian;
+	return fabsf(x - (float)(int) x) < 1;
+}
+
+static uint8_t exif_orientation_to_mupdf[9] = { 0, 1, 5, 3, 7, 6, 4, 8, 2 };
+
+static int extract_exif_resolution(jpeg_saved_marker_ptr marker,
+	int *xres, int *yres, uint8_t *orientation)
+{
+	int is_big_endian, orient;
 	const unsigned char *data;
 	unsigned int offset, ifd_len, res_type = 0;
 	float x_res = 0, y_res = 0;
@@ -225,6 +267,13 @@ static int extract_exif_resolution(jpeg_saved_marker_ptr marker, int *xres, int 
 		unsigned int value_off = read_value(data + offset + 8, 4, is_big_endian) + 6;
 		switch (tag)
 		{
+		case 0x112:
+			if (type == 3 && count == 1) {
+				orient = read_value(data + offset + 8, 2, is_big_endian);
+				if (orient >= 1 && orient <= 8 && orientation)
+					*orientation = exif_orientation_to_mupdf[orient];
+			}
+			break;
 		case 0x11A:
 			if (type == 5 && value_off > offset && value_off <= marker->data_length - 8)
 				x_res = 1.0f * read_value(data + value_off, 4, is_big_endian) / read_value(data + value_off + 4, 4, is_big_endian);
@@ -240,7 +289,7 @@ static int extract_exif_resolution(jpeg_saved_marker_ptr marker, int *xres, int 
 		}
 	}
 
-	if (x_res <= 0 || x_res > INT_MAX || y_res <= 0 || y_res > INT_MAX)
+	if (x_res <= 0 || !float_can_be_int(x_res) || y_res <= 0 || !float_can_be_int(y_res))
 		return 0;
 	if (res_type == 2)
 	{
@@ -305,7 +354,8 @@ fz_load_jpeg(fz_context *ctx, const unsigned char *rbuf, size_t rlen)
 	unsigned char *row[1], *sp, *dp;
 	fz_colorspace *colorspace = NULL;
 	unsigned int x;
-	int k, stride;
+	int k;
+	size_t stride;
 	fz_pixmap *image = NULL;
 
 	fz_var(colorspace);
@@ -354,7 +404,7 @@ fz_load_jpeg(fz_context *ctx, const unsigned char *rbuf, size_t rlen)
 
 		image = fz_new_pixmap(ctx, colorspace, cinfo.output_width, cinfo.output_height, NULL, 0);
 
-		if (extract_exif_resolution(cinfo.marker_list, &image->xres, &image->yres))
+		if (extract_exif_resolution(cinfo.marker_list, &image->xres, &image->yres, NULL))
 			/* XPS prefers EXIF resolution to JFIF density */;
 		else if (extract_app13_resolution(cinfo.marker_list, &image->xres, &image->yres))
 			/* XPS prefers APP13 resolution to JFIF density */;
@@ -376,7 +426,7 @@ fz_load_jpeg(fz_context *ctx, const unsigned char *rbuf, size_t rlen)
 
 		row[0] = fz_malloc(ctx, (size_t)cinfo.output_components * cinfo.output_width);
 		dp = image->samples;
-		stride = image->stride - image->w * image->n;
+		stride = image->stride - image->w * (size_t)image->n;
 		while (cinfo.output_scanline < cinfo.output_height)
 		{
 			jpeg_read_scanlines(&cinfo, row, 1);
@@ -420,7 +470,7 @@ fz_load_jpeg(fz_context *ctx, const unsigned char *rbuf, size_t rlen)
 }
 
 void
-fz_load_jpeg_info(fz_context *ctx, const unsigned char *rbuf, size_t rlen, int *xp, int *yp, int *xresp, int *yresp, fz_colorspace **cspacep)
+fz_load_jpeg_info(fz_context *ctx, const unsigned char *rbuf, size_t rlen, int *xp, int *yp, int *xresp, int *yresp, fz_colorspace **cspacep, uint8_t *orientation)
 {
 	struct jpeg_decompress_struct cinfo;
 	struct jpeg_error_mgr err;
@@ -428,6 +478,8 @@ fz_load_jpeg_info(fz_context *ctx, const unsigned char *rbuf, size_t rlen, int *
 	fz_colorspace *icc = NULL;
 
 	*cspacep = NULL;
+	if (orientation)
+		*orientation = 0;
 
 	cinfo.mem = NULL;
 	cinfo.global_state = 0;
@@ -469,7 +521,7 @@ fz_load_jpeg_info(fz_context *ctx, const unsigned char *rbuf, size_t rlen, int *
 		if (!*cspacep)
 			fz_throw(ctx, FZ_ERROR_GENERIC, "cannot determine colorspace");
 
-		if (extract_exif_resolution(cinfo.marker_list, xresp, yresp))
+		if (extract_exif_resolution(cinfo.marker_list, xresp, yresp, orientation))
 			/* XPS prefers EXIF resolution to JFIF density */;
 		else if (extract_app13_resolution(cinfo.marker_list, xresp, yresp))
 			/* XPS prefers APP13 resolution to JFIF density */;

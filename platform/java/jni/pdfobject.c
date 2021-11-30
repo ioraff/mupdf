@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /* PDFObject interface */
 
 JNIEXPORT void JNICALL
@@ -422,7 +444,7 @@ FUN(PDFObject_resolve)(JNIEnv *env, jobject self)
 		jni_rethrow(env, ctx);
 
 	pdf_keep_obj(ctx, ind);
-	jobj = (*env)->NewObject(env, cls_PDFObject, mid_PDFObject_init, jlong_cast(ind), self);
+	jobj = (*env)->NewObject(env, cls_PDFObject, mid_PDFObject_init, jlong_cast(ind));
 	if (!jobj)
 		pdf_drop_obj(ctx, ind);
 	return jobj;
@@ -442,7 +464,7 @@ FUN(PDFObject_getArray)(JNIEnv *env, jobject self, jint index)
 	fz_catch(ctx)
 		jni_rethrow(env, ctx);
 
-	return to_PDFObject_safe(ctx, env, self, val);
+	return to_PDFObject_safe(ctx, env, val);
 }
 
 JNIEXPORT jobject JNICALL
@@ -466,7 +488,7 @@ FUN(PDFObject_getDictionary)(JNIEnv *env, jobject self, jstring jname)
 	fz_catch(ctx)
 		jni_rethrow(env, ctx);
 
-	return to_PDFObject_safe(ctx, env, self, val);
+	return to_PDFObject_safe(ctx, env, val);
 }
 
 JNIEXPORT jobject JNICALL
@@ -483,7 +505,7 @@ FUN(PDFObject_getDictionaryKey)(JNIEnv *env, jobject self, jint index)
 	fz_catch(ctx)
 		jni_rethrow(env, ctx);
 
-	return to_PDFObject_safe(ctx, env, self, key);
+	return to_PDFObject_safe(ctx, env, key);
 }
 
 JNIEXPORT void JNICALL

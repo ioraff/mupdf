@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "gl-app.h"
 
 #include <string.h>
@@ -122,8 +144,28 @@ static void ui_input_delete_selection(struct input *input)
 	input->p = input->q = p;
 }
 
-static void ui_input_paste(struct input *input, const char *buf, int n)
+static void ui_input_paste(struct input *input, const char *buf)
 {
+	int n = (int)strlen(buf);
+	if (input->widget)
+	{
+		char *newtext;
+		int selStart = input->p - input->text;
+		int selEnd = input->q - input->text;
+		if (pdf_edit_text_field_value(ctx, input->widget, input->text, buf, &selStart, &selEnd, &newtext))
+		{
+			size_t len = strlen(newtext);
+			if (len > sizeof(input->text)-1)
+				len = sizeof(input->text)-1;
+			memcpy(input->text, newtext, len);
+			input->text[len] = 0;
+			fz_free(ctx, newtext);
+			input->p = input->text + selStart;
+			input->q = input->p;
+			input->end = input->text + len;
+		}
+		return;
+	}
 	if (input->p != input->q)
 		ui_input_delete_selection(input);
 	if (input->end + n + 1 < input->text + sizeof(input->text))
@@ -163,7 +205,7 @@ static void ui_do_paste(struct input *input)
 {
 	const char *buf = ui_get_clipboard();
 	if (buf)
-		ui_input_paste(input, buf, (int)strlen(buf));
+		ui_input_paste(input, buf);
 }
 
 static int ui_input_key(struct input *input, int multiline)
@@ -281,7 +323,7 @@ static int ui_input_key(struct input *input, int multiline)
 			ui.focus = NULL;
 			return UI_INPUT_ACCEPT;
 		}
-		ui_input_paste(input, "\n", 1);
+		ui_input_paste(input, "\n");
 		break;
 	case KEY_BACKSPACE:
 		if (input->p != input->q)
@@ -335,9 +377,10 @@ static int ui_input_key(struct input *input, int multiline)
 			int cat = ucdn_get_general_category(ui.key);
 			if (ui.key == ' ' || (cat >= UCDN_GENERAL_CATEGORY_LL && cat < UCDN_GENERAL_CATEGORY_ZL))
 			{
-				char buf[8];
+				char buf[9];
 				int n = fz_runetochar(buf, ui.key);
-				ui_input_paste(input, buf, n);
+				buf[n] = 0;
+				ui_input_paste(input, buf);
 			}
 		}
 		break;

@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * PDF cleaning tool: general purpose pdf syntax washer.
  *
@@ -16,7 +38,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr,
 		"usage: mutool clean [options] input.pdf [output.pdf] [pages]\n"
@@ -42,7 +64,7 @@ static void usage(void)
 		"\t-AA\trecreate appearance streams for annotations\n"
 		"\tpages\tcomma separated list of page numbers and ranges\n"
 		);
-	exit(1);
+	return 1;
 }
 
 static int encrypt_method_from_string(const char *name)
@@ -63,6 +85,8 @@ int pdfclean_main(int argc, char **argv)
 	pdf_write_options opts = pdf_default_write_options;
 	int errors = 0;
 	fz_context *ctx;
+
+	opts.dont_regenerate_id = 1;
 
 	while ((c = fz_getopt(argc, argv, "adfgilp:sczDAE:O:U:P:")) != -1)
 	{
@@ -87,7 +111,7 @@ int pdfclean_main(int argc, char **argv)
 		case 'O': fz_strlcpy(opts.opwd_utf8, fz_optarg, sizeof opts.opwd_utf8); break;
 		case 'U': fz_strlcpy(opts.upwd_utf8, fz_optarg, sizeof opts.upwd_utf8); break;
 
-		default: usage(); break;
+		default: return usage();
 		}
 	}
 
@@ -95,7 +119,7 @@ int pdfclean_main(int argc, char **argv)
 		opts.do_pretty = 1;
 
 	if (argc - fz_optind < 1)
-		usage();
+		return usage();
 
 	infile = argv[fz_optind++];
 

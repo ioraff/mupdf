@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * muconvert -- command line tool for converting documents
  */
@@ -26,7 +48,7 @@ static fz_document *doc;
 static fz_document_writer *out;
 static int count;
 
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr,
 		"mutool convert version " FZ_VERSION "\n"
@@ -60,7 +82,7 @@ static void usage(void)
 	fputs(fz_pdf_write_options_usage, stderr);
 #endif
 	fputs(fz_svg_write_options_usage, stderr);
-	exit(1);
+	return 1;
 }
 
 static void runpage(int number)
@@ -112,7 +134,7 @@ int muconvert_main(int argc, char **argv)
 	{
 		switch (c)
 		{
-		default: usage(); break;
+		default: return usage();
 
 		case 'p': password = fz_optarg; break;
 		case 'A': alphabits = atoi(fz_optarg); break;
@@ -129,7 +151,7 @@ int muconvert_main(int argc, char **argv)
 	}
 
 	if (fz_optind == argc || (!format && !output))
-		usage();
+		return usage();
 
 	/* Create a context to hold the exception stack and various caches. */
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);

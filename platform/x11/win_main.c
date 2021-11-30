@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -269,7 +291,7 @@ int wingetsavepath(pdfapp_t *app, char *buf, int len)
 		}
 
 		wcscpy(wbuf, twbuf);
-		strcpy(filename, buf);
+		fz_strlcpy(filename, buf, sizeof filename);
 		return 1;
 	}
 	else
@@ -327,7 +349,6 @@ void wincopyfile(pdfapp_t *app, char *source, char *target)
 	CopyFile(wsource, wtarget, FALSE);
 }
 
-static char pd_filename[256] = "The file is encrypted.";
 static char pd_password[256] = "";
 static wchar_t pd_passwordw[256] = {0};
 static char td_textinput[1024] = "";
@@ -344,7 +365,7 @@ dlogpassproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 	switch(message)
 	{
 	case WM_INITDIALOG:
-		SetDlgItemTextA(hwnd, 4, pd_filename);
+		SetDlgItemTextA(hwnd, 4, "The file is encrypted.");
 		return TRUE;
 	case WM_COMMAND:
 		switch(wParam)
@@ -452,7 +473,6 @@ dlogchoiceproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 char *winpassword(pdfapp_t *app, char *filename)
 {
-	char buf[1024], *s;
 	int code;
 
 	if (password)
@@ -462,13 +482,6 @@ char *winpassword(pdfapp_t *app, char *filename)
 		return p;
 	}
 
-	strcpy(buf, filename);
-	s = buf;
-	if (strrchr(s, '\\')) s = strrchr(s, '\\') + 1;
-	if (strrchr(s, '/')) s = strrchr(s, '/') + 1;
-	if (strlen(s) > 32)
-		strcpy(s + 30, "...");
-	sprintf(pd_filename, "The file \"%s\" is encrypted.", s);
 	code = DialogBoxW(NULL, L"IDD_DLOGPASS", hwndframe, dlogpassproc);
 	if (code <= 0)
 		pdfapp_error(app, "cannot create password dialog");
@@ -969,6 +982,7 @@ static void handlekey(int c)
 {
 	int modifier = (GetAsyncKeyState(VK_SHIFT) < 0);
 	modifier |= ((GetAsyncKeyState(VK_CONTROL) < 0)<<2);
+	modifier |= ((GetAsyncKeyState(VK_MENU) < 0)<<3);
 
 	if (timer_pending)
 		killtimer(&gapp);
@@ -1201,6 +1215,18 @@ viewproc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		return 1;
 
+	case WM_SYSKEYDOWN:
+		/* alt keys */
+		switch (wParam)
+		{
+		case VK_LEFT:
+		case VK_RIGHT:
+			handlekey(wParam + 256);
+			handlemouse(oldx, oldy, 0, 0);	/* update cursor */
+			return 0;
+		}
+		return 1;
+
 	/* unicode encoded chars, including escape, backspace etc... */
 	case WM_CHAR:
 		if (wParam < 256)
@@ -1282,6 +1308,11 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShow
 		MessageBoxA(NULL, "Cannot initialize MuPDF context.", "MuPDF: Error", MB_OK);
 		exit(1);
 	}
+
+	/* stderr goes nowhere. Get us a debug stream we have a chance
+	 * of seeing. */
+	fz_set_stddbg(ctx, fz_stdods(ctx));
+
 	pdfapp_init(ctx, &gapp);
 
 	argv = fz_argv_from_wargv(argc, wargv);
@@ -1318,7 +1349,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShow
 
 	if (fz_optind < argc)
 	{
-		strcpy(filename, argv[fz_optind++]);
+		fz_strlcpy(filename, argv[fz_optind++], sizeof filename);
 	}
 	else
 	{

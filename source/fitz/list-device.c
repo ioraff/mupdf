@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include <assert.h>
@@ -150,6 +172,41 @@ enum { OPM = 1, OP = 2, BP = 3, RI = 4};
 #define SIZE_IN_NODES(t) \
 	((t + sizeof(fz_display_node) - 1) / sizeof(fz_display_node))
 
+/* The display list node are 32bit aligned. For some architectures we
+ * need to pad to 64bit for pointers. We allow for that here. */
+static void pad_size_for_pointer(const fz_display_list *list, size_t *size)
+{
+	/* list->len and size are both counting in nodes, not bytes.
+	 * Nodes are consistently 32bit things, hence we are looking
+	 * for even/odd for "8 byte aligned or not". */
+	if (FZ_POINTER_ALIGN_MOD <= 4)
+		return;
+	/* Otherwise, ensure we're on an even boundary. */
+	if (FZ_POINTER_ALIGN_MOD == 8)
+	{
+		if ((list->len + (*size)) & 1)
+			(*size)++;
+	} else
+		(*size) = ((list->len + (*size) + (FZ_POINTER_ALIGN_MOD>>2) - 1) & ~((FZ_POINTER_ALIGN_MOD>>2)-1)) - list->len;
+}
+
+static void align_node_for_pointer(fz_display_node **node)
+{
+	intptr_t ptr;
+
+	if (FZ_POINTER_ALIGN_MOD <= 4)
+		return;
+
+	ptr = (intptr_t)*node;
+	if (FZ_POINTER_ALIGN_MOD == 8)
+	{
+		if (ptr & 4)
+			(*node) = (fz_display_node *)(ptr+4);
+	}
+	else
+		(*node) = (fz_display_node *)((ptr + FZ_POINTER_ALIGN_MOD - 1) & ~(FZ_POINTER_ALIGN_MOD-1));
+}
+
 static void
 fz_append_display_node(
 	fz_context *ctx,
@@ -262,11 +319,15 @@ fz_append_display_node(
 		rect_off = size;
 		size += SIZE_IN_NODES(sizeof(fz_rect));
 	}
-	if (color || colorspace)
+	if (color == NULL)
+	{
+		if (colorspace)
+			fz_throw(ctx, FZ_ERROR_GENERIC, "Colorspace cannot be specified without color.");
+	}
+	else
 	{
 		if (colorspace != writer->colorspace)
 		{
-			assert(color);
 			if (colorspace == fz_device_gray(ctx))
 			{
 				if (color[0] == 0.0f)
@@ -309,6 +370,7 @@ fz_append_display_node(
 				int i;
 				int n = fz_colorspace_n(ctx, colorspace);
 
+				pad_size_for_pointer(list, &size);
 				colorspace_off = size;
 				size += SIZE_IN_NODES(sizeof(fz_colorspace *));
 				node.cs = CS_OTHER_0;
@@ -385,6 +447,7 @@ fz_append_display_node(
 				if (i == n)
 				{
 					node.cs = CS_OTHER_0;
+					pad_size_for_pointer(list, &size);
 					colorspace_off = size;
 					size += SIZE_IN_NODES(sizeof(fz_colorspace *));
 					color = NULL;
@@ -444,13 +507,17 @@ fz_append_display_node(
 	}
 	if (stroke && (writer->stroke == NULL || stroke != writer->stroke))
 	{
+		pad_size_for_pointer(list, &size);
 		stroke_off = size;
 		size += SIZE_IN_NODES(sizeof(fz_stroke_state *));
 		node.stroke = 1;
 	}
 	if (path && (writer->path == NULL || path != writer->path))
 	{
-		size_t max = SIZE_IN_NODES(MAX_NODE_SIZE) - size - SIZE_IN_NODES(private_data_len);
+		size_t max;
+
+		pad_size_for_pointer(list, &size);
+		max = SIZE_IN_NODES(MAX_NODE_SIZE) - size - SIZE_IN_NODES(private_data_len);
 		path_size = SIZE_IN_NODES(fz_pack_path(ctx, NULL, max, path));
 		node.path = 1;
 		path_off = size;
@@ -459,7 +526,10 @@ fz_append_display_node(
 	}
 	if (private_data != NULL)
 	{
-		size_t max = SIZE_IN_NODES(MAX_NODE_SIZE) - size;
+		size_t max;
+
+		pad_size_for_pointer(list, &size);
+		max = SIZE_IN_NODES(MAX_NODE_SIZE) - size;
 		if (SIZE_IN_NODES(private_data_len) > max)
 			fz_throw(ctx, FZ_ERROR_GENERIC, "Private data too large to pack into display list node");
 		private_off = size;
@@ -1377,6 +1447,7 @@ fz_drop_display_list_imp(fz_context *ctx, fz_storable *list_)
 			cs_n = 4;
 			break;
 		case CS_OTHER_0:
+			align_node_for_pointer(&node);
 			cs = *(fz_colorspace **)node;
 			cs_n = fz_colorspace_n(ctx, cs);
 			fz_drop_colorspace(ctx, cs);
@@ -1399,12 +1470,15 @@ fz_drop_display_list_imp(fz_context *ctx, fz_storable *list_)
 			node += SIZE_IN_NODES(2*sizeof(float));
 		if (n.stroke)
 		{
+			align_node_for_pointer(&node);
 			fz_drop_stroke_state(ctx, *(fz_stroke_state **)node);
 			node += SIZE_IN_NODES(sizeof(fz_stroke_state *));
 		}
 		if (n.path)
 		{
-			int path_size = fz_packed_path_size((fz_path *)node);
+			int path_size;
+			align_node_for_pointer(&node);
+			path_size = fz_packed_path_size((fz_path *)node);
 			fz_drop_path(ctx, (fz_path *)node);
 			node += SIZE_IN_NODES(path_size);
 		}
@@ -1415,20 +1489,25 @@ fz_drop_display_list_imp(fz_context *ctx, fz_storable *list_)
 		case FZ_CMD_CLIP_TEXT:
 		case FZ_CMD_CLIP_STROKE_TEXT:
 		case FZ_CMD_IGNORE_TEXT:
+			align_node_for_pointer(&node);
 			fz_drop_text(ctx, *(fz_text **)node);
 			break;
 		case FZ_CMD_FILL_SHADE:
+			align_node_for_pointer(&node);
 			fz_drop_shade(ctx, *(fz_shade **)node);
 			break;
 		case FZ_CMD_FILL_IMAGE:
 		case FZ_CMD_FILL_IMAGE_MASK:
 		case FZ_CMD_CLIP_IMAGE_MASK:
+			align_node_for_pointer(&node);
 			fz_drop_image(ctx, *(fz_image **)node);
 			break;
 		case FZ_CMD_BEGIN_GROUP:
+			align_node_for_pointer(&node);
 			fz_drop_colorspace(ctx, *(fz_colorspace **)node);
 			break;
 		case FZ_CMD_DEFAULT_COLORSPACES:
+			align_node_for_pointer(&node);
 			fz_drop_default_colorspaces(ctx, *(fz_default_colorspaces **)node);
 			break;
 		}
@@ -1575,6 +1654,7 @@ fz_run_display_list(fz_context *ctx, fz_display_list *list, fz_device *dev, fz_m
 				color[3] = 1.0f;
 				break;
 			case CS_OTHER_0:
+				align_node_for_pointer(&node);
 				colorspace = fz_keep_colorspace(ctx, *(fz_colorspace **)(node));
 				node += SIZE_IN_NODES(sizeof(fz_colorspace *));
 				en = fz_colorspace_n(ctx, colorspace);
@@ -1630,12 +1710,14 @@ fz_run_display_list(fz_context *ctx, fz_display_list *list, fz_device *dev, fz_m
 		}
 		if (n.stroke)
 		{
+			align_node_for_pointer(&node);
 			fz_drop_stroke_state(ctx, stroke);
 			stroke = fz_keep_stroke_state(ctx, *(fz_stroke_state **)node);
 			node += SIZE_IN_NODES(sizeof(fz_stroke_state *));
 		}
 		if (n.path)
 		{
+			align_node_for_pointer(&node);
 			fz_drop_path(ctx, path);
 			path = fz_keep_path(ctx, (fz_path *)node);
 			node += SIZE_IN_NODES(fz_packed_path_size(path));
@@ -1661,6 +1743,19 @@ fz_run_display_list(fz_context *ctx, fz_display_list *list, fz_device *dev, fz_m
 			n.cmd == FZ_CMD_BEGIN_LAYER || n.cmd == FZ_CMD_END_LAYER)
 		{
 			empty = 0;
+		}
+		else if (n.cmd == FZ_CMD_FILL_PATH || n.cmd == FZ_CMD_STROKE_PATH)
+		{
+			/* Zero area paths are suitable for stroking. */
+			empty = !fz_is_valid_rect(fz_intersect_rect(trans_rect, scissor));
+		}
+		else if (n.cmd == FZ_CMD_FILL_TEXT || n.cmd == FZ_CMD_STROKE_TEXT ||
+			n.cmd == FZ_CMD_CLIP_TEXT || n.cmd == FZ_CMD_CLIP_STROKE_TEXT)
+		{
+			/* Zero area text (such as spaces) should be passed
+			 * through. Text that is completely outside the scissor
+			 * can be elided. */
+			empty = !fz_is_valid_rect(fz_intersect_rect(trans_rect, scissor));
 		}
 		else
 		{
@@ -1718,34 +1813,43 @@ visible:
 				break;
 			case FZ_CMD_FILL_TEXT:
 				fz_unpack_color_params(&color_params, n.flags);
+				align_node_for_pointer(&node);
 				fz_fill_text(ctx, dev, *(fz_text **)node, trans_ctm, colorspace, color, alpha, color_params);
 				break;
 			case FZ_CMD_STROKE_TEXT:
 				fz_unpack_color_params(&color_params, n.flags);
+				align_node_for_pointer(&node);
 				fz_stroke_text(ctx, dev, *(fz_text **)node, stroke, trans_ctm, colorspace, color, alpha, color_params);
 				break;
 			case FZ_CMD_CLIP_TEXT:
+				align_node_for_pointer(&node);
 				fz_clip_text(ctx, dev, *(fz_text **)node, trans_ctm, trans_rect);
 				break;
 			case FZ_CMD_CLIP_STROKE_TEXT:
+				align_node_for_pointer(&node);
 				fz_clip_stroke_text(ctx, dev, *(fz_text **)node, stroke, trans_ctm, trans_rect);
 				break;
 			case FZ_CMD_IGNORE_TEXT:
+				align_node_for_pointer(&node);
 				fz_ignore_text(ctx, dev, *(fz_text **)node, trans_ctm);
 				break;
 			case FZ_CMD_FILL_SHADE:
 				fz_unpack_color_params(&color_params, n.flags);
+				align_node_for_pointer(&node);
 				fz_fill_shade(ctx, dev, *(fz_shade **)node, trans_ctm, alpha, color_params);
 				break;
 			case FZ_CMD_FILL_IMAGE:
 				fz_unpack_color_params(&color_params, n.flags);
+				align_node_for_pointer(&node);
 				fz_fill_image(ctx, dev, *(fz_image **)node, trans_ctm, alpha, color_params);
 				break;
 			case FZ_CMD_FILL_IMAGE_MASK:
 				fz_unpack_color_params(&color_params, n.flags);
+				align_node_for_pointer(&node);
 				fz_fill_image_mask(ctx, dev, *(fz_image **)node, trans_ctm, colorspace, color, alpha, color_params);
 				break;
 			case FZ_CMD_CLIP_IMAGE_MASK:
+				align_node_for_pointer(&node);
 				fz_clip_image_mask(ctx, dev, *(fz_image **)node, trans_ctm, trans_rect);
 				break;
 			case FZ_CMD_POP_CLIP:
@@ -1759,6 +1863,7 @@ visible:
 				fz_end_mask(ctx, dev);
 				break;
 			case FZ_CMD_BEGIN_GROUP:
+				align_node_for_pointer(&node);
 				fz_begin_group(ctx, dev, trans_rect, *(fz_colorspace **)node, (n.flags & ISOLATED) != 0, (n.flags & KNOCKOUT) != 0, (n.flags>>2), alpha);
 				break;
 			case FZ_CMD_END_GROUP:
@@ -1767,8 +1872,10 @@ visible:
 			case FZ_CMD_BEGIN_TILE:
 			{
 				int cached;
-				fz_list_tile_data *data = (fz_list_tile_data *)node;
+				fz_list_tile_data *data;
 				fz_rect tile_rect;
+				align_node_for_pointer(&node);
+				data = (fz_list_tile_data *)node;
 				tiled++;
 				tile_rect = data->view;
 				cached = fz_begin_tile_id(ctx, dev, rect, tile_rect, data->xstep, data->ystep, trans_ctm, data->id);
@@ -1787,9 +1894,11 @@ visible:
 					fz_render_flags(ctx, dev, FZ_DEVFLAG_GRIDFIT_AS_TILED, 0);
 				break;
 			case FZ_CMD_DEFAULT_COLORSPACES:
+				align_node_for_pointer(&node);
 				fz_set_default_colorspaces(ctx, dev, *(fz_default_colorspaces **)node);
 				break;
 			case FZ_CMD_BEGIN_LAYER:
+				align_node_for_pointer(&node);
 				fz_begin_layer(ctx, dev, (const char *)node);
 				break;
 			case FZ_CMD_END_LAYER:

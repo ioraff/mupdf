@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -506,9 +528,9 @@ exit:
 
 typedef struct
 {
-	pdf_pkcs7_designated_name base;
+	pdf_pkcs7_distinguished_name base;
 	char buf[8192];
-} pdf_pkcs7_designated_name_openssl;
+} pdf_pkcs7_distinguished_name_openssl;
 
 typedef struct
 {
@@ -609,9 +631,9 @@ static char *x509_get_name_entry_string(fz_context *ctx, X509_NAME *name, int ni
 	return data ? fz_strdup(ctx, (const char *)ASN1_STRING_get0_data(data)) : NULL;
 }
 
-static pdf_pkcs7_designated_name *x509_designated_name(fz_context *ctx, X509 *x509)
+static pdf_pkcs7_distinguished_name *x509_distinguished_name(fz_context *ctx, X509 *x509)
 {
-	pdf_pkcs7_designated_name *dn = fz_malloc_struct(ctx, pdf_pkcs7_designated_name);
+	pdf_pkcs7_distinguished_name *dn = fz_malloc_struct(ctx, pdf_pkcs7_distinguished_name);
 
 	fz_try(ctx)
 	{
@@ -624,18 +646,18 @@ static pdf_pkcs7_designated_name *x509_designated_name(fz_context *ctx, X509 *x5
 	}
 	fz_catch(ctx)
 	{
-		pdf_signature_drop_designated_name(ctx, dn);
+		pdf_signature_drop_distinguished_name(ctx, dn);
 		fz_rethrow(ctx);
 	}
 
-	return (pdf_pkcs7_designated_name *)dn;
+	return (pdf_pkcs7_distinguished_name *)dn;
 }
 
-static pdf_pkcs7_designated_name *signer_designated_name(fz_context *ctx, pdf_pkcs7_signer *signer)
+static pdf_pkcs7_distinguished_name *signer_distinguished_name(fz_context *ctx, pdf_pkcs7_signer *signer)
 {
 	openssl_signer *osigner = (openssl_signer *)signer;
 	X509 *x509 = osigner->x509;
-	pdf_pkcs7_designated_name *dn = fz_malloc_struct(ctx, pdf_pkcs7_designated_name);
+	pdf_pkcs7_distinguished_name *dn = fz_malloc_struct(ctx, pdf_pkcs7_distinguished_name);
 
 	fz_try(ctx)
 	{
@@ -648,7 +670,7 @@ static pdf_pkcs7_designated_name *signer_designated_name(fz_context *ctx, pdf_pk
 	}
 	fz_catch(ctx)
 	{
-		pdf_signature_drop_designated_name(ctx, dn);
+		pdf_signature_drop_distinguished_name(ctx, dn);
 		fz_rethrow(ctx);
 	}
 
@@ -724,7 +746,7 @@ static int signer_create_digest(fz_context *ctx, pdf_pkcs7_signer *signer, fz_st
 
 exit:
 	BIO_free(bp7);
-	BIO_free(bp7in);
+	BIO_free_all(bp7in);
 	PKCS7_free(p7);
 	BIO_free(bdata);
 
@@ -754,7 +776,7 @@ pdf_pkcs7_signer *pkcs7_openssl_read_pfx(fz_context *ctx, const char *pfile, con
 		signer = fz_malloc_struct(ctx, openssl_signer);
 		signer->base.keep = keep_signer;
 		signer->base.drop = drop_signer;
-		signer->base.get_signing_name = signer_designated_name;
+		signer->base.get_signing_name = signer_distinguished_name;
 		signer->base.max_digest_size = max_digest_size;
 		signer->base.create_digest = signer_create_digest;
 		signer->refs = 1;
@@ -829,9 +851,9 @@ pdf_pkcs7_signer *pkcs7_openssl_read_pfx(fz_context *ctx, const char *pfile, con
 	return &signer->base;
 }
 
-pdf_pkcs7_designated_name *get_signatory(fz_context *ctx, pdf_pkcs7_verifier *verifier, unsigned char *sig, size_t sig_len)
+pdf_pkcs7_distinguished_name *get_signatory(fz_context *ctx, pdf_pkcs7_verifier *verifier, unsigned char *sig, size_t sig_len)
 {
-	pdf_pkcs7_designated_name *name = NULL;
+	pdf_pkcs7_distinguished_name *name = NULL;
 	PKCS7 *pk7sig = NULL;
 	BIO *bsig = NULL;
 	STACK_OF(PKCS7_SIGNER_INFO) *sk = NULL;
@@ -852,7 +874,7 @@ pdf_pkcs7_designated_name *get_signatory(fz_context *ctx, pdf_pkcs7_verifier *ve
 	x509 = pk7_signer(pk7_certs(pk7sig), sk_PKCS7_SIGNER_INFO_value(sk, 0));
 
 	fz_try(ctx)
-		name = x509_designated_name(ctx, x509);
+		name = x509_distinguished_name(ctx, x509);
 	fz_catch(ctx)
 	{
 		PKCS7_free(pk7sig);

@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "xps-imp.h"
 
@@ -13,7 +35,7 @@ xps_load_links_in_element(fz_context *ctx, xps_document *doc, fz_matrix ctm,
 static void
 xps_add_link(fz_context *ctx, xps_document *doc, fz_rect area, char *base_uri, char *target_uri, fz_link **head)
 {
-	fz_link *link = fz_new_link(ctx, area, doc, target_uri);
+	fz_link *link = fz_new_link(ctx, area, target_uri);
 	link->next = *head;
 	*head = link;
 }
@@ -191,6 +213,6 @@ xps_load_links(fz_context *ctx, fz_page *page_)
 	fz_matrix ctm;
 	fz_link *link = NULL;
 	ctm = fz_scale(72.0f / 96.0f, 72.0f / 96.0f);
-	xps_load_links_in_fixed_page(ctx, page->doc, ctm, page, &link);
+	xps_load_links_in_fixed_page(ctx, (xps_document*)page->super.doc, ctm, page, &link);
 	return link;
 }

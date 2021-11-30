@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -75,10 +97,8 @@ struct pdf_ocg_descriptor
 int
 pdf_count_layer_configs(fz_context *ctx, pdf_document *doc)
 {
-	/* If no OCProperties, then no OCGs */
-	if (!doc || !doc->ocg)
-		return 0;
-	return doc->ocg->num_configs;
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
+	return desc ? desc->num_configs : 0;
 }
 
 static int
@@ -104,10 +124,27 @@ count_entries(fz_context *ctx, pdf_obj *obj)
 }
 
 static pdf_ocg_ui *
-populate_ui(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_ocg_ui *ui, pdf_obj *order, int depth, pdf_obj *rbgroups, pdf_obj *locked)
+get_ocg_ui(fz_context *ctx, pdf_ocg_descriptor *desc, int fill)
+{
+	if (fill == desc->num_ui_entries)
+	{
+		/* Number of layers changed while parsing;
+		 * probably due to a repair. */
+		int newsize = desc->num_ui_entries * 2;
+		if (newsize == 0)
+			newsize = 4; /* Arbitrary non-zero */
+		desc->ui = fz_realloc_array(ctx, desc->ui, newsize, pdf_ocg_ui);
+		desc->num_ui_entries = newsize;
+	}
+	return &desc->ui[fill];
+}
+
+static int
+populate_ui(fz_context *ctx, pdf_ocg_descriptor *desc, int fill, pdf_obj *order, int depth, pdf_obj *rbgroups, pdf_obj *locked)
 {
 	int len = pdf_array_len(ctx, order);
 	int i, j;
+	pdf_ocg_ui *ui;
 
 	for (i = 0; i < len; i++)
 	{
@@ -118,7 +155,7 @@ populate_ui(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_ocg_ui *ui, pdf_obj *
 				continue;
 
 			fz_try(ctx)
-				ui = populate_ui(ctx, desc, ui, o, depth+1, rbgroups, locked);
+				fill = populate_ui(ctx, desc, fill, o, depth+1, rbgroups, locked);
 			fz_always(ctx)
 				pdf_unmark_obj(ctx, o);
 			fz_catch(ctx)
@@ -126,14 +163,14 @@ populate_ui(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_ocg_ui *ui, pdf_obj *
 
 			continue;
 		}
-		ui->depth = depth;
 		if (pdf_is_string(ctx, o))
 		{
+			ui = get_ocg_ui(ctx, desc, fill++);
+			ui->depth = depth;
 			ui->ocg = -1;
 			ui->name = pdf_to_str_buf(ctx, o);
 			ui->button_flags = PDF_LAYER_UI_LABEL;
 			ui->locked = 1;
-			ui++;
 			continue;
 		}
 
@@ -144,13 +181,14 @@ populate_ui(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_ocg_ui *ui, pdf_obj *
 		}
 		if (j == desc->len)
 			continue; /* OCG not found in main list! Just ignore it */
+		ui = get_ocg_ui(ctx, desc, fill++);
+		ui->depth = depth;
 		ui->ocg = j;
 		ui->name = pdf_dict_get_string(ctx, o, PDF_NAME(Name), NULL);
 		ui->button_flags = pdf_array_contains(ctx, o, rbgroups) ? PDF_LAYER_UI_RADIOBOX : PDF_LAYER_UI_CHECKBOX;
 		ui->locked = pdf_array_contains(ctx, o, locked);
-		ui++;
 	}
-	return ui;
+	return fill;
 }
 
 static void
@@ -185,10 +223,10 @@ load_ui(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *ocprops, pdf_obj *oc
 	if (desc->num_ui_entries == 0)
 		return;
 
-	desc->ui = Memento_label(fz_calloc(ctx, count, sizeof(pdf_ocg_ui)), "pdf_ocg_ui");
+	desc->ui = fz_malloc_struct_array(ctx, count, pdf_ocg_ui);
 	fz_try(ctx)
 	{
-		(void)populate_ui(ctx, desc, desc->ui, order, 0, rbgroups, locked);
+		desc->num_ui_entries = populate_ui(ctx, desc, 0, order, 0, rbgroups, locked);
 	}
 	fz_catch(ctx)
 	{
@@ -200,10 +238,12 @@ load_ui(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *ocprops, pdf_obj *oc
 void
 pdf_select_layer_config(fz_context *ctx, pdf_document *doc, int config)
 {
+	pdf_ocg_descriptor *desc;
 	int i, j, len, len2;
-	pdf_ocg_descriptor *desc = doc->ocg;
 	pdf_obj *obj, *cobj;
 	pdf_obj *name;
+
+	desc = pdf_read_ocg(ctx, doc);
 
 	obj = pdf_dict_get(ctx, pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME(Root)), PDF_NAME(OCProperties));
 	if (!obj)
@@ -287,18 +327,19 @@ pdf_select_layer_config(fz_context *ctx, pdf_document *doc, int config)
 void
 pdf_layer_config_info(fz_context *ctx, pdf_document *doc, int config_num, pdf_layer_config *info)
 {
+	pdf_ocg_descriptor *desc;
 	pdf_obj *ocprops;
 	pdf_obj *obj;
 
 	if (!info)
 		return;
 
+	desc = pdf_read_ocg(ctx, doc);
+
 	info->name = NULL;
 	info->creator = NULL;
 
-	if (doc == NULL || doc->ocg == NULL)
-		return;
-	if (config_num < 0 || config_num >= doc->ocg->num_configs)
+	if (config_num < 0 || config_num >= desc->num_configs)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Invalid layer config number");
 
 	ocprops = pdf_dict_getp(ctx, pdf_trailer(ctx, doc), "Root/OCProperties");
@@ -371,23 +412,19 @@ clear_radio_group(fz_context *ctx, pdf_document *doc, pdf_obj *ocg)
 
 int pdf_count_layer_config_ui(fz_context *ctx, pdf_document *doc)
 {
-	if (doc == NULL || doc->ocg == NULL)
-		return 0;
-
-	return doc->ocg->num_ui_entries;
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
+	return desc ? desc->num_ui_entries : 0;
 }
 
 void pdf_select_layer_config_ui(fz_context *ctx, pdf_document *doc, int ui)
 {
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
 	pdf_ocg_ui *entry;
 
-	if (doc == NULL || doc->ocg == NULL)
-		return;
-
-	if (ui < 0 || ui >= doc->ocg->num_ui_entries)
+	if (ui < 0 || ui >= desc->num_ui_entries)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Out of range UI entry selected");
 
-	entry = &doc->ocg->ui[ui];
+	entry = &desc->ui[ui];
 	if (entry->button_flags != PDF_LAYER_UI_RADIOBOX &&
 		entry->button_flags != PDF_LAYER_UI_CHECKBOX)
 		return;
@@ -395,60 +432,57 @@ void pdf_select_layer_config_ui(fz_context *ctx, pdf_document *doc, int ui)
 		return;
 
 	if (entry->button_flags == PDF_LAYER_UI_RADIOBOX)
-		clear_radio_group(ctx, doc, doc->ocg->ocgs[entry->ocg].obj);
+		clear_radio_group(ctx, doc, desc->ocgs[entry->ocg].obj);
 
-	doc->ocg->ocgs[entry->ocg].state = 1;
+	desc->ocgs[entry->ocg].state = 1;
 }
 
 void pdf_toggle_layer_config_ui(fz_context *ctx, pdf_document *doc, int ui)
 {
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
 	pdf_ocg_ui *entry;
 	int selected;
 
-	if (doc == NULL || doc->ocg == NULL)
-		return;
-
-	if (ui < 0 || ui >= doc->ocg->num_ui_entries)
+	if (ui < 0 || ui >= desc->num_ui_entries)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Out of range UI entry toggled");
 
-	entry = &doc->ocg->ui[ui];
+	entry = &desc->ui[ui];
 	if (entry->button_flags != PDF_LAYER_UI_RADIOBOX &&
 		entry->button_flags != PDF_LAYER_UI_CHECKBOX)
 		return;
 	if (entry->locked)
 		return;
 
-	selected = doc->ocg->ocgs[entry->ocg].state;
+	selected = desc->ocgs[entry->ocg].state;
 
 	if (entry->button_flags == PDF_LAYER_UI_RADIOBOX)
-		clear_radio_group(ctx, doc, doc->ocg->ocgs[entry->ocg].obj);
+		clear_radio_group(ctx, doc, desc->ocgs[entry->ocg].obj);
 
-	doc->ocg->ocgs[entry->ocg].state = !selected;
+	desc->ocgs[entry->ocg].state = !selected;
 }
 
 void pdf_deselect_layer_config_ui(fz_context *ctx, pdf_document *doc, int ui)
 {
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
 	pdf_ocg_ui *entry;
 
-	if (doc == NULL || doc->ocg == NULL)
-		return;
-
-	if (ui < 0 || ui >= doc->ocg->num_ui_entries)
+	if (ui < 0 || ui >= desc->num_ui_entries)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Out of range UI entry deselected");
 
-	entry = &doc->ocg->ui[ui];
+	entry = &desc->ui[ui];
 	if (entry->button_flags != PDF_LAYER_UI_RADIOBOX &&
 		entry->button_flags != PDF_LAYER_UI_CHECKBOX)
 		return;
 	if (entry->locked)
 		return;
 
-	doc->ocg->ocgs[entry->ocg].state = 0;
+	desc->ocgs[entry->ocg].state = 0;
 }
 
 void
 pdf_layer_config_ui_info(fz_context *ctx, pdf_document *doc, int ui, pdf_layer_config_ui *info)
 {
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
 	pdf_ocg_ui *entry;
 
 	if (!info)
@@ -460,16 +494,13 @@ pdf_layer_config_ui_info(fz_context *ctx, pdf_document *doc, int ui, pdf_layer_c
 	info->text = NULL;
 	info->type = 0;
 
-	if (doc == NULL || doc->ocg == NULL)
-		return;
-
-	if (ui < 0 || ui >= doc->ocg->num_ui_entries)
+	if (ui < 0 || ui >= desc->num_ui_entries)
 		fz_throw(ctx, FZ_ERROR_GENERIC, "Out of range UI entry selected");
 
-	entry = &doc->ocg->ui[ui];
+	entry = &desc->ui[ui];
 	info->type = entry->button_flags;
 	info->depth = entry->depth;
-	info->selected = doc->ocg->ocgs[entry->ocg].state;
+	info->selected = desc->ocgs[entry->ocg].state;
 	info->locked = entry->locked;
 	info->text = entry->name;
 }
@@ -509,10 +540,11 @@ ocg_intents_include(fz_context *ctx, pdf_ocg_descriptor *desc, const char *name)
 }
 
 int
-pdf_is_hidden_ocg(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *rdb, const char *usage, pdf_obj *ocg)
+pdf_is_ocg_hidden(fz_context *ctx, pdf_document *doc, pdf_obj *rdb, const char *usage, pdf_obj *ocg)
 {
-	char event_state[16];
+	pdf_ocg_descriptor *desc = pdf_read_ocg(ctx, doc);
 	pdf_obj *obj, *obj2, *type;
+	char event_state[16];
 
 	/* Avoid infinite recursions */
 	if (pdf_obj_marked(ctx, ocg))
@@ -522,8 +554,8 @@ pdf_is_hidden_ocg(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *rdb, const
 	if (!usage)
 		return 0;
 
-	/* If no ocg descriptor, everything is visible */
-	if (!desc)
+	/* If no ocg descriptor or no ocgs described, everything is visible */
+	if (!desc || desc->len == 0)
 		return 0;
 
 	/* If we've been handed a name, look it up in the properties. */
@@ -551,7 +583,8 @@ pdf_is_hidden_ocg(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *rdb, const
 		/* by default an OCG is visible, unless it's explicitly hidden */
 		for (i = 0; i < len; i++)
 		{
-			if (!pdf_objcmp_resolve(ctx, desc->ocgs[i].obj, ocg))
+			/* Deliberately do NOT resolve here. Bug 702261. */
+			if (!pdf_objcmp(ctx, desc->ocgs[i].obj, ocg))
 			{
 				default_value = !desc->ocgs[i].state;
 				break;
@@ -657,7 +690,7 @@ pdf_is_hidden_ocg(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *rdb, const
 				len = pdf_array_len(ctx, obj);
 				for (i = 0; i < len; i++)
 				{
-					int hidden = pdf_is_hidden_ocg(ctx, desc, rdb, usage, pdf_array_get(ctx, obj, i));
+					int hidden = pdf_is_ocg_hidden(ctx, doc, rdb, usage, pdf_array_get(ctx, obj, i));
 					if ((combine & 1) == 0)
 						hidden = !hidden;
 					if (combine & 2)
@@ -668,7 +701,7 @@ pdf_is_hidden_ocg(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *rdb, const
 			}
 			else
 			{
-				on = pdf_is_hidden_ocg(ctx, desc, rdb, usage, obj);
+				on = pdf_is_ocg_hidden(ctx, doc, rdb, usage, obj);
 				if ((combine & 1) == 0)
 					on = !on;
 			}
@@ -687,58 +720,47 @@ pdf_is_hidden_ocg(fz_context *ctx, pdf_ocg_descriptor *desc, pdf_obj *rdb, const
 	return 0;
 }
 
-void
+pdf_ocg_descriptor *
 pdf_read_ocg(fz_context *ctx, pdf_document *doc)
 {
-	pdf_obj *obj, *ocg, *configs;
+	pdf_obj *prop, *ocgs, *configs;
 	int len, i, num_configs;
-	pdf_ocg_descriptor *desc;
 
-	fz_var(desc);
-
-	obj = pdf_dict_get(ctx, pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME(Root)), PDF_NAME(OCProperties));
-	if (!obj)
-		return;
-
-	configs = pdf_dict_get(ctx, obj, PDF_NAME(Configs));
-	if (configs == NULL)
-		num_configs = 1;
-	else if (!pdf_is_array(ctx, configs))
-		fz_throw(ctx, FZ_ERROR_GENERIC, "Invalid Configs value");
-	else
-		num_configs = pdf_array_len(ctx, configs);
-
-	ocg = pdf_dict_get(ctx, obj, PDF_NAME(OCGs));
-	if (!ocg || !pdf_is_array(ctx, ocg))
-		/* Not ever supposed to happen, but live with it. */
-		return;
-	len = pdf_array_len(ctx, ocg);
-
-	desc = fz_malloc_struct(ctx, pdf_ocg_descriptor);
-	desc->ocgs = NULL;
+	if (doc->ocg)
+		return doc->ocg;
 
 	fz_try(ctx)
 	{
-		desc->num_configs = num_configs;
-		desc->len = len;
-		desc->ocgs = fz_calloc(ctx, len, sizeof(*desc->ocgs));
-		desc->intent = NULL;
-		for (i=0; i < len; i++)
+		prop = pdf_dict_get(ctx, pdf_dict_get(ctx, pdf_trailer(ctx, doc), PDF_NAME(Root)), PDF_NAME(OCProperties));
+
+		configs = pdf_dict_get(ctx, prop, PDF_NAME(Configs));
+		num_configs = pdf_array_len(ctx, configs);
+		ocgs = pdf_dict_get(ctx, prop, PDF_NAME(OCGs));
+		len = pdf_array_len(ctx, ocgs);
+
+		doc->ocg = fz_malloc_struct(ctx, pdf_ocg_descriptor);
+		doc->ocg->ocgs = fz_calloc(ctx, len, sizeof(*doc->ocg->ocgs));
+		doc->ocg->len = len;
+		doc->ocg->num_configs = num_configs;
+
+		for (i = 0; i < len; i++)
 		{
-			pdf_obj *o = pdf_array_get(ctx, ocg, i);
-			desc->ocgs[i].obj = pdf_keep_obj(ctx, o);
-			desc->ocgs[i].state = 1;
+			pdf_obj *o = pdf_array_get(ctx, ocgs, i);
+			doc->ocg->ocgs[i].obj = pdf_keep_obj(ctx, o);
+			doc->ocg->ocgs[i].state = 1;
 		}
-		doc->ocg = desc;
+
+		pdf_select_layer_config(ctx, doc, 0);
 	}
 	fz_catch(ctx)
 	{
-		fz_free(ctx, desc->ocgs);
-		fz_free(ctx, desc);
-		fz_rethrow(ctx);
+		pdf_drop_ocg(ctx, doc);
+		fz_rethrow_if(ctx, FZ_ERROR_TRYLATER);
+		fz_warn(ctx, "Ignoring broken Optional Content configuration");
+		doc->ocg = fz_malloc_struct(ctx, pdf_ocg_descriptor);
 	}
 
-	pdf_select_layer_config(ctx, doc, 0);
+	return doc->ocg;
 }
 
 void
@@ -746,9 +768,6 @@ pdf_set_layer_config_as_default(fz_context *ctx, pdf_document *doc)
 {
 	pdf_obj *ocprops, *d, *order, *on, *configs, *rbgroups;
 	int k;
-
-	if (doc == NULL || doc->ocg == NULL)
-		return;
 
 	ocprops = pdf_dict_getp(ctx, pdf_trailer(ctx, doc), "Root/OCProperties");
 	if (!ocprops)

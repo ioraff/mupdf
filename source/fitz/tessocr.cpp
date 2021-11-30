@@ -1,9 +1,10 @@
-#if defined(HAVE_LEPTONICA) && defined(HAVE_TESSERACT)
+#include "mupdf/fitz/config.h"
 
+#ifndef OCR_DISABLED
+
+#include <climits>
 #include "tesseract/baseapi.h"
-#include "tesseract/genericvector.h"
-#include "tesseract/serialis.h"
-#include "tesseract/strngs.h"
+#include "tesseract/capi.h"          // for ETEXT_DESC
 
 extern "C" {
 
@@ -11,32 +12,15 @@ extern "C" {
 
 #include "tessocr.h"
 
-/* Non-overridden leptonica alloc functions. These should never
- * actually be used. */
-void *leptonica_malloc(size_t blocksize)
-{
-	void *ret = malloc(blocksize);
-#ifdef DEBUG_ALLOCS
-	printf("%d LEPTONICA_MALLOC %d -> %p\n", event++, (int)blocksize, ret);
-	fflush(stdout);
-#endif
-	return ret;
-}
+/* Now the actual allocations to be used for leptonica. Unfortunately
+ * we have to use a nasty global here. */
+static fz_context *leptonica_mem = NULL;
 
-void *leptonica_calloc(size_t numelm, size_t elemsize)
+void *leptonica_malloc(size_t size)
 {
-	void *ret = calloc(numelm, elemsize);
+	void *ret = Memento_label(fz_malloc_no_throw(leptonica_mem, size), "leptonica_malloc");
 #ifdef DEBUG_ALLOCS
-	printf("%d LEPTONICA_CALLOC %d,%d -> %p\n", event++, (int)numelm, (int)elem> fflush(stdout);
-#endif
-	return ret;
-}
-
-void *leptonica_realloc(void *ptr, size_t blocksize)
-{
-	void *ret = realloc(ptr, blocksize);
-#ifdef DEBUG_ALLOCS
-	printf("%d LEPTONICA_REALLOC %p,%d -> %p\n", event++, ptr, (int)blocksize, ret);
+	printf("%d LEPTONICA_MALLOC(%p) %d -> %p\n", event++, leptonica_mem, (int)size, ret);
 	fflush(stdout);
 #endif
 	return ret;
@@ -45,34 +29,73 @@ void *leptonica_realloc(void *ptr, size_t blocksize)
 void leptonica_free(void *ptr)
 {
 #ifdef DEBUG_ALLOCS
-	printf("%d LEPTONICA_FREE %p\n", event++, ptr);
+	printf("%d LEPTONICA_FREE(%p) %p\n", event++, leptonica_mem, ptr);
 	fflush(stdout);
 #endif
-	free(ptr);
+	fz_free(leptonica_mem, ptr);
 }
 
-/* Now the actual allocations to be used for leptonica. Unfortunately
- * we have to use a nasty global here. */
-static fz_context *leptonica_mem;
-
-static void *my_leptonica_malloc(size_t size)
+void *leptonica_calloc(size_t numelm, size_t elemsize)
 {
-	void *ret = Memento_label(fz_malloc_no_throw(leptonica_mem, size), "leptonica_malloc");
+	void *ret = leptonica_malloc(numelm * elemsize);
+
+	if (ret)
+		memset(ret, 0, numelm * elemsize);
 #ifdef DEBUG_ALLOCS
-	printf("%d MY_LEPTONICA_MALLOC(%p) %d -> %p\n", event++, leptonica_mem, (int)size, ret);
+	printf("%d LEPTONICA_CALLOC %d,%d -> %p\n", event++, (int)numelm, (int)elemsize, ret);
 	fflush(stdout);
 #endif
 	return ret;
 }
 
-static void my_leptonica_free(void *ptr)
+/* Not currently actually used */
+void *leptonica_realloc(void *ptr, size_t blocksize)
 {
+	void *ret = fz_realloc_no_throw(leptonica_mem, ptr, blocksize);
+
 #ifdef DEBUG_ALLOCS
-	printf("%d MY_LEPTONICA_FREE(%p) %p\n", event++, leptonica_mem, ptr);
+	printf("%d LEPTONICA_REALLOC %p,%d -> %p\n", event++, ptr, (int)blocksize, ret);
 	fflush(stdout);
 #endif
-	fz_free(leptonica_mem, ptr);
+	return NULL;
 }
+
+#if TESSERACT_MAJOR_VERSION >= 5
+
+static bool
+load_file(const char* filename, std::vector<char>* data)
+{
+	bool result = false;
+	FILE *fp = fopen(filename, "rb");
+	if (fp == NULL)
+		return false;
+
+	fseek(fp, 0, SEEK_END);
+	long size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
+	// Trying to open a directory on Linux sets size to LONG_MAX. Catch it here.
+	if (size > 0 && size < LONG_MAX)
+	{
+		// reserve an extra byte in case caller wants to append a '\0' character
+		data->reserve(size + 1);
+		data->resize(size);
+		result = static_cast<long>(fread(&(*data)[0], 1, size, fp)) == size;
+	}
+	fclose(fp);
+	return result;
+}
+
+static bool
+tess_file_reader(const char *fname, std::vector<char> *out)
+{
+	/* FIXME: Look for inbuilt ones. */
+
+	/* Then under TESSDATA */
+	return load_file(fname, out);
+}
+
+#else
 
 static bool
 load_file(const char* filename, GenericVector<char>* data)
@@ -99,20 +122,14 @@ load_file(const char* filename, GenericVector<char>* data)
 }
 
 static bool
-tess_file_reader(const char *fname, GenericVector<char> *out)
+tess_file_reader(const STRING& fname, GenericVector<char> *out)
 {
-	//const char *file = fname;
-	//const char *s;
-
-	//for (s = fname; *s; s++)
-	//	if (*s == '\\' || *s == '/')
-	//		file = s+1;
-
 	/* FIXME: Look for inbuilt ones. */
 
 	/* Then under TESSDATA */
-	return load_file(fname, out);
+	return load_file(fname.c_str(), out);
 }
+#endif
 
 static void
 set_leptonica_mem(fz_context *ctx)
@@ -147,7 +164,7 @@ void *ocr_init(fz_context *ctx, const char *language)
 	tesseract::TessBaseAPI *api;
 
 	set_leptonica_mem(ctx);
-	setPixMemoryManager(my_leptonica_malloc, my_leptonica_free);
+	setPixMemoryManager(leptonica_malloc, leptonica_free);
 	api = new tesseract::TessBaseAPI();
 
 	if (api == NULL)
@@ -240,6 +257,34 @@ ocr_clear_image(fz_context *ctx, Pix *image)
 	pixDestroy(&image);
 }
 
+typedef struct {
+	fz_context *ctx;
+	void *arg;
+	int (*progress)(fz_context *, void *, int progress);
+} progress_arg;
+
+static bool
+do_cancel(void *arg, int dummy)
+{
+	return true;
+}
+
+static bool
+progress_callback(ETEXT_DESC *monitor, int l, int r, int t, int b)
+{
+	progress_arg *details = (progress_arg *)monitor->cancel_this;
+	int cancel;
+
+	if (!details->progress)
+		return false;
+
+	cancel = details->progress(details->ctx, details->arg, monitor->progress);
+	if (cancel)
+		monitor->cancel = do_cancel;
+
+	return false;
+}
+
 void ocr_recognise(fz_context *ctx,
 		void *api_,
 		fz_pixmap *pix,
@@ -251,6 +296,9 @@ void ocr_recognise(fz_context *ctx,
 				const int *word_bbox,
 				const int *char_bbox,
 				int pointsize),
+		int (*progress)(fz_context *ctx,
+				void *arg,
+				int progress),
 		void *arg)
 {
 	tesseract::TessBaseAPI *api = (tesseract::TessBaseAPI *)api_;
@@ -262,13 +310,22 @@ void ocr_recognise(fz_context *ctx,
 	bool bold, italic, underlined, monospace, serif, smallcaps;
 	int pointsize, font_id;
 	const char* font_name;
+	ETEXT_DESC monitor;
+	progress_arg details;
 
 	if (api == NULL)
 		return;
 
 	image = ocr_set_image(ctx, api, pix);
 
-	code = api->Recognize(NULL);
+	monitor.cancel = nullptr;
+	monitor.cancel_this = &details;
+	details.ctx = ctx;
+	details.arg = arg;
+	details.progress = progress;
+	monitor.progress_callback2 = progress_callback;
+
+	code = api->Recognize(&monitor);
 	if (code < 0)
 	{
 		ocr_clear_image(ctx, image);
@@ -330,6 +387,7 @@ void ocr_recognise(fz_context *ctx,
 					fz_chartorune(&unicode, graph);
 					callback(ctx, arg, unicode, font_name, line_bbox, word_bbox, char_bbox, pointsize);
 				}
+				delete[] graph;
 				res_it->Next(tesseract::RIL_SYMBOL);
 			}
 			while (!res_it->Empty(tesseract::RIL_BLOCK) &&

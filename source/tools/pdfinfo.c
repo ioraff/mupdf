@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * Information tool.
  * Print information about the input pdf.
@@ -173,7 +195,6 @@ infousage(void)
 		"\t-X\tlist form and postscript xobjects\n"
 		"\tpages\tcomma separated list of page numbers and ranges\n"
 		);
-	exit(1);
 }
 
 static void
@@ -921,7 +942,10 @@ showinfo(fz_context *ctx, globals *glo, char *filename, int show, const char *pa
 	fz_output *out = glo->out;
 
 	if (!glo->doc)
+	{
 		infousage();
+		fz_throw(ctx, FZ_ERROR_GENERIC, "Cannot show info without document");
+	}
 
 	allpages = !strcmp(pagelist, "1-N");
 
@@ -1024,12 +1048,15 @@ int pdfinfo_main(int argc, char **argv)
 		case 'p': password = fz_optarg; break;
 		default:
 			infousage();
-			break;
+			return 1;
 		}
 	}
 
 	if (fz_optind == argc)
+	{
 		infousage();
+		return 1;
+	}
 
 	ctx = fz_new_context(NULL, NULL, FZ_STORE_UNLIMITED);
 	if (!ctx)

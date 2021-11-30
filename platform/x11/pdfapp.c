@@ -253,15 +253,15 @@ void pdfapp_reloadfile(pdfapp_t *app)
 	pdfapp_open(app, filename, 1);
 }
 
-static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *event, void *data)
+static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *evt, void *data)
 {
 	pdfapp_t *app = (pdfapp_t *)data;
 
-	switch (event->type)
+	switch (evt->type)
 	{
 	case PDF_DOCUMENT_EVENT_ALERT:
 		{
-			pdf_alert_event *alert = pdf_access_alert_event(ctx, event);
+			pdf_alert_event *alert = pdf_access_alert_event(ctx, evt);
 			winalert(app, alert);
 		}
 		break;
@@ -272,7 +272,7 @@ static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *event, v
 
 	case PDF_DOCUMENT_EVENT_EXEC_MENU_ITEM:
 		{
-			const char *item = pdf_access_exec_menu_item_event(ctx, event);
+			const char *item = pdf_access_exec_menu_item_event(ctx, evt);
 
 			if (!strcmp(item, "Print"))
 				winprint(app);
@@ -283,7 +283,7 @@ static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *event, v
 
 	case PDF_DOCUMENT_EVENT_LAUNCH_URL:
 		{
-			pdf_launch_url_event *launch_url = pdf_access_launch_url_event(ctx, event);
+			pdf_launch_url_event *launch_url = pdf_access_launch_url_event(ctx, evt);
 
 			pdfapp_warn(app, "The document attempted to open url: %s. (Not supported by app)", launch_url->url);
 		}
@@ -291,7 +291,7 @@ static void event_cb(fz_context *ctx, pdf_document *doc, pdf_doc_event *event, v
 
 	case PDF_DOCUMENT_EVENT_MAIL_DOC:
 		{
-			pdf_mail_doc_event *mail_doc = pdf_access_mail_doc_event(ctx, event);
+			pdf_mail_doc_event *mail_doc = pdf_access_mail_doc_event(ctx, evt);
 
 			pdfapp_warn(app, "The document attempted to mail the document%s%s%s%s%s%s%s%s (Not supported)",
 				mail_doc->to[0]?", To: ":"", mail_doc->to,
@@ -476,7 +476,7 @@ void pdfapp_open_progressive(pdfapp_t *app, char *filename, int reload, int kbps
 		fz_try(ctx)
 		{
 			pdf_enable_js(ctx, idoc);
-			pdf_set_doc_event_callback(ctx, idoc, event_cb, app);
+			pdf_set_doc_event_callback(ctx, idoc, event_cb, NULL, app);
 		}
 		fz_catch(ctx)
 		{
@@ -976,14 +976,17 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 		sprintf(buf2, " - %d/%d (%g dpi)",
 				app->pageno, app->pagecount, app->resolution);
 		len = MAX_TITLE-strlen(buf2);
-		if (strlen(app->doctitle) > len)
+		if (strlen(app->doctitle) >= len)
 		{
 			fz_strlcpy(buf, app->doctitle, len-3);
 			fz_strlcat(buf, "...", MAX_TITLE);
 			fz_strlcat(buf, buf2, MAX_TITLE);
 		}
 		else
-			sprintf(buf, "%s%s", app->doctitle, buf2);
+		{
+			fz_strlcpy(buf, app->doctitle, MAX_TITLE);
+			fz_strlcat(buf, buf2, MAX_TITLE);
+		}
 		wintitle(app, buf);
 
 		pdfapp_viewctm(&ctm, app);
@@ -1032,7 +1035,7 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 			cookie.errors++;
 	}
 
-	if (transition)
+	if (transition && drawpage)
 	{
 		app->new_image = app->image;
 		app->image = NULL;
@@ -1050,7 +1053,7 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 		app->duration = 0;
 		fz_page_presentation(app->ctx, app->page, &app->transition, &app->duration);
 		if (app->duration == 0)
-			app->duration = 5;
+			app->duration = app->presentation_time_in_seconds;
 		app->in_transit = fz_generate_transition(app->ctx, app->image, app->old_image, app->new_image, 0, &app->transition);
 		if (!app->in_transit)
 		{
@@ -1108,11 +1111,13 @@ static void pdfapp_gotouri(pdfapp_t *app, char *uri)
 	{
 		char buf_base[PATH_MAX];
 		char buf_cwd[PATH_MAX];
-		fz_dirname(buf_base, app->docpath, sizeof buf_base);
-		getcwd(buf_cwd, sizeof buf_cwd);
-		fz_snprintf(buf, sizeof buf, "file://%s/%s/%s", buf_cwd, buf_base, uri+7);
-		fz_cleanname(buf+7);
-		uri = buf;
+		if (getcwd(buf_cwd, sizeof buf_cwd))
+		{
+			fz_dirname(buf_base, app->docpath, sizeof buf_base);
+			fz_snprintf(buf, sizeof buf, "file://%s/%s/%s", buf_cwd, buf_base, uri+7);
+			fz_cleanname(buf+7);
+			uri = buf;
+		}
 	}
 
 	winopenuri(app, uri);
@@ -1316,6 +1321,7 @@ void pdfapp_onkey(pdfapp_t *app, int c, int modifiers)
 		app->number[app->numberlen] = '\0';
 	}
 
+key_rewritten:
 	switch (c)
 	{
 	case 'q':
@@ -1458,6 +1464,13 @@ void pdfapp_onkey(pdfapp_t *app, int c, int modifiers)
 		break;
 
 	case 'h':
+		if (modifiers & 8)
+		{
+			/* Alt pressed. Treat this as 't'. (i.e. ALT-Left) */
+			modifiers &= ~8;
+			c = 't';
+			goto key_rewritten;
+		}
 		app->panx += app->imgw / 10;
 		pdfapp_showpage(app, 0, 0, 1, 0, 0);
 		break;
@@ -1545,6 +1558,7 @@ void pdfapp_onkey(pdfapp_t *app, int c, int modifiers)
 
 	case 'p':
 		app->presentation_mode = !app->presentation_mode;
+		app->presentation_time_in_seconds = (app->numberlen > 0) ? atoi(app->number) : 5;
 		break;
 
 	/*

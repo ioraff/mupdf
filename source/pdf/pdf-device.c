@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "mupdf/pdf.h"
 
@@ -6,6 +28,9 @@
 #include FT_ADVANCES_H
 
 #define ALLOWED_TEXT_POS_ERROR (0.001f)
+
+#define ENC_IDENTITY 0
+#define ENC_UNICODE 1
 
 typedef struct pdf_device pdf_device;
 
@@ -78,6 +103,7 @@ struct pdf_device
 	int num_cid_fonts;
 	int max_cid_fonts;
 	fz_font **cid_fonts;
+	int *cid_fonts_enc;
 
 	int num_alphas;
 	int max_alphas;
@@ -283,6 +309,8 @@ pdf_dev_alpha(fz_context *ctx, pdf_device *pdev, float alpha, int stroke)
 	if (gs->alpha[stroke] == alpha)
 		return;
 
+	gs->alpha[stroke] = alpha;
+
 	/* Have we sent such an alpha before? */
 	for (i = 0; i < pdev->num_alphas; i++)
 		if (pdev->alphas[i].alpha == alpha && pdev->alphas[i].stroke == stroke)
@@ -327,20 +355,23 @@ pdf_dev_alpha(fz_context *ctx, pdf_device *pdev, float alpha, int stroke)
 }
 
 static int
-pdf_dev_add_font_res(fz_context *ctx, pdf_device *pdev, fz_font *font)
+pdf_dev_find_font_res(fz_context *ctx, pdf_device *pdev, fz_font *font)
 {
-	pdf_obj *fres;
-	char text[32];
 	int k;
-	int num;
 
 	/* Check if we already had this one */
 	for (k = 0; k < pdev->num_cid_fonts; k++)
 		if (pdev->cid_fonts[k] == font)
 			return k;
 
-	/* This will add it to the xref if needed */
-	fres = pdf_add_cid_font(ctx, pdev->doc, font);
+	return -1;
+}
+
+static int
+pdf_dev_add_font_res_imp(fz_context *ctx, pdf_device *pdev, fz_font *font, pdf_obj *fres, int enc)
+{
+	char text[32];
+	int num;
 
 	/* Not there so add to resources */
 	fz_snprintf(text, sizeof(text), "Font/F%d", pdev->num_cid_fonts);
@@ -353,11 +384,52 @@ pdf_dev_add_font_res(fz_context *ctx, pdf_device *pdev, fz_font *font)
 		if (newmax == 0)
 			newmax = 4;
 		pdev->cid_fonts = fz_realloc_array(ctx, pdev->cid_fonts, newmax, fz_font*);
+		pdev->cid_fonts_enc = fz_realloc_array(ctx, pdev->cid_fonts_enc, newmax, int);
 		pdev->max_cid_fonts = newmax;
 	}
 	num = pdev->num_cid_fonts++;
 	pdev->cid_fonts[num] = fz_keep_font(ctx, font);
+	pdev->cid_fonts_enc[num] = enc;
 	return num;
+}
+
+static int
+pdf_dev_add_substitute_font_res(fz_context *ctx, pdf_device *pdev, fz_font *font)
+{
+	pdf_obj *fres;
+	int k;
+
+	/* Check if we already had this one */
+	k = pdf_dev_find_font_res(ctx, pdev, font);
+	if (k >= 0)
+		return k;
+
+	/* This will add it to the xref if needed */
+	if (font->flags.cjk)
+		fres = pdf_add_cjk_font(ctx, pdev->doc, font, font->flags.cjk_lang, 0, font->flags.is_serif);
+	else
+		fres = pdf_add_substitute_font(ctx, pdev->doc, font);
+
+	/* And add to the resource dictionary. */
+	return pdf_dev_add_font_res_imp(ctx, pdev, font, fres, ENC_UNICODE);
+}
+
+static int
+pdf_dev_add_embedded_font_res(fz_context *ctx, pdf_device *pdev, fz_font *font)
+{
+	pdf_obj *fres;
+	int k;
+
+	/* Check if we already had this one */
+	k = pdf_dev_find_font_res(ctx, pdev, font);
+	if (k >= 0)
+		return k;
+
+	/* This will add it to the xref if needed */
+	fres = pdf_add_cid_font(ctx, pdev->doc, font);
+
+	/* And add to the resource dictionary. */
+	return pdf_dev_add_font_res_imp(ctx, pdev, font, fres, ENC_IDENTITY);
 }
 
 static void
@@ -370,14 +442,16 @@ pdf_dev_font(fz_context *ctx, pdf_device *pdev, fz_font *font, fz_matrix trm)
 	if (gs->font >= 0 && pdev->cid_fonts[gs->font] == font && gs->font_size == font_size)
 		return;
 
+	// TODO: vertical wmode
+
 	if (fz_font_t3_procs(ctx, font))
 		fz_throw(ctx, FZ_ERROR_GENERIC, "pdf device does not support type 3 fonts");
-	if (fz_font_flags(font)->ft_substitute)
-		fz_throw(ctx, FZ_ERROR_GENERIC, "pdf device does not support substitute fonts");
-	if (!pdf_font_writing_supported(font))
-		fz_throw(ctx, FZ_ERROR_GENERIC, "pdf device does not support font types found in this file");
 
-	gs->font = pdf_dev_add_font_res(ctx, pdev, font);
+	if (fz_font_flags(font)->ft_substitute || !pdf_font_writing_supported(font))
+		gs->font = pdf_dev_add_substitute_font_res(ctx, pdev, font);
+	else
+		gs->font = pdf_dev_add_embedded_font_res(ctx, pdev, font);
+
 	gs->font_size = font_size;
 
 	fz_append_printf(ctx, gs->buf, "/F%d %g Tf\n", gs->font, gs->font_size);
@@ -433,6 +507,7 @@ pdf_dev_text_span(fz_context *ctx, pdf_device *pdev, fz_text_span *span)
 	fz_matrix inv_tfs;
 	fz_point d;
 	float adv;
+	int enc;
 	int dx, dy;
 	int i;
 
@@ -451,12 +526,16 @@ pdf_dev_text_span(fz_context *ctx, pdf_device *pdev, fz_text_span *span)
 	inv_tm = fz_invert_matrix(tm);
 	inv_trm = fz_invert_matrix(trm);
 
+	enc = pdev->cid_fonts_enc[gs->font];
+
 	fz_append_printf(ctx, gs->buf, "%M Tm\n[<", &tm);
 
 	for (i = 0; i < span->len; ++i)
 	{
 		fz_text_item *it = &span->items[i];
-		if (it->gid < 0)
+		if (enc == ENC_IDENTITY && it->gid < 0)
+			continue;
+		if (enc == ENC_UNICODE && it->ucs < 0)
 			continue;
 
 		/* transform difference from expected pen position into font units. */
@@ -489,8 +568,10 @@ pdf_dev_text_span(fz_context *ctx, pdf_device *pdev, fz_text_span *span)
 
 		if (fz_font_t3_procs(ctx, span->font))
 			fz_append_printf(ctx, gs->buf, "%02x", it->gid);
-		else
+		else if (enc == ENC_IDENTITY)
 			fz_append_printf(ctx, gs->buf, "%04x", it->gid);
+		else if (enc == ENC_UNICODE)
+			fz_append_printf(ctx, gs->buf, "%04x", it->ucs);
 
 		adv = fz_advance_glyph(ctx, span->font, it->gid, span->wmode);
 		if (span->wmode == 0)
@@ -1106,13 +1187,14 @@ pdf_dev_drop_device(fz_context *ctx, fz_device *dev)
 
 	pdf_drop_obj(ctx, pdev->resources);
 	fz_free(ctx, pdev->cid_fonts);
+	fz_free(ctx, pdev->cid_fonts_enc);
 	fz_free(ctx, pdev->image_indices);
 	fz_free(ctx, pdev->groups);
 	fz_free(ctx, pdev->alphas);
 	fz_free(ctx, pdev->gstates);
 }
 
-fz_device *pdf_new_pdf_device(fz_context *ctx, pdf_document *doc, fz_matrix topctm, fz_rect mediabox, pdf_obj *resources, fz_buffer *buf)
+fz_device *pdf_new_pdf_device(fz_context *ctx, pdf_document *doc, fz_matrix topctm, pdf_obj *resources, fz_buffer *buf)
 {
 	pdf_device *dev = fz_new_derived_device(ctx, pdf_device);
 
@@ -1186,5 +1268,5 @@ fz_device *pdf_page_write(fz_context *ctx, pdf_document *doc, fz_rect mediabox, 
 	fz_matrix pagectm = { 1, 0, 0, -1, -mediabox.x0, mediabox.y1 };
 	*presources = pdf_new_dict(ctx, doc, 0);
 	*pcontents = fz_new_buffer(ctx, 0);
-	return pdf_new_pdf_device(ctx, doc, pagectm, mediabox, *presources, *pcontents);
+	return pdf_new_pdf_device(ctx, doc, pagectm, *presources, *pcontents);
 }

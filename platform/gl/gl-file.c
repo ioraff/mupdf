@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "gl-app.h"
 
 #include <string.h>
@@ -28,11 +50,13 @@ static struct
 	struct input input_dir;
 	struct input input_file;
 	struct list list_dir;
+	char original_file_name[PATH_MAX];
 	char curdir[PATH_MAX];
 	int count;
 	int max;
 	struct entry *files;
 	int selected;
+	int confirm;
 } fc;
 
 static int cmp_entry(const void *av, const void *bv)
@@ -300,25 +324,25 @@ void ui_init_open_file(const char *dir, int (*filter)(const char *fn))
 	load_dir(dir);
 }
 
-int ui_open_file(char filename[PATH_MAX], const char *label)
+int ui_open_file(char *filename, const char *label)
 {
 	static int last_click_time = 0;
 	static int last_click_sel = -1;
 	int i, rv = 0;
 
-	ui_panel_begin(0, 0, 4, 4, 1);
+	ui_panel_begin(0, 0, ui.padsize*2, ui.padsize*2, 1);
 	{
 		if (label)
 		{
-			ui_layout(T, X, NW, 4, 2);
+			ui_layout(T, X, NW, ui.padsize*2, ui.padsize);
 			ui_label(label);
 		}
 		ui_layout(L, Y, NW, 0, 0);
-		ui_panel_begin(150, 0, 0, 0, 0);
+		ui_panel_begin(ui.gridsize*6, 0, 0, 0, 0);
 		{
-			ui_layout(T, X, NW, 2, 2);
+			ui_layout(T, X, NW, ui.padsize, ui.padsize);
 			list_drives();
-			ui_layout(B, X, NW, 2, 2);
+			ui_layout(B, X, NW, ui.padsize, ui.padsize);
 			if (ui_button("Cancel") || (!ui.focus && ui.key == KEY_ESCAPE))
 			{
 				filename[0] = 0;
@@ -327,26 +351,24 @@ int ui_open_file(char filename[PATH_MAX], const char *label)
 		}
 		ui_panel_end();
 
-		ui_layout(T, X, NW, 2, 2);
+		ui_layout(T, X, NW, ui.padsize, ui.padsize);
 		ui_panel_begin(0, ui.gridsize, 0, 0, 0);
 		{
-			if (fc.selected >= 0)
+			int disabled = (fc.selected < 0);
+			ui_layout(R, NONE, CENTER, 0, 0);
+			if (ui_button_aux("Open", disabled) || (!disabled && !ui.focus && ui.key == KEY_ENTER))
 			{
-				ui_layout(R, NONE, CENTER, 0, 0);
-				if (ui_button("Open") || (!ui.focus && ui.key == KEY_ENTER))
-				{
-					fz_snprintf(filename, PATH_MAX, "%s/%s", fc.curdir, fc.files[fc.selected].name);
-					rv = 1;
-				}
-				ui_spacer();
+				fz_snprintf(filename, PATH_MAX, "%s/%s", fc.curdir, fc.files[fc.selected].name);
+				rv = 1;
 			}
+			ui_spacer();
 			ui_layout(ALL, X, CENTER, 0, 0);
 			if (ui_input(&fc.input_dir, 0, 1) == UI_INPUT_ACCEPT)
 				load_dir(fc.input_dir.text);
 		}
 		ui_panel_end();
 
-		ui_layout(ALL, BOTH, NW, 2, 2);
+		ui_layout(ALL, BOTH, NW, ui.padsize, ui.padsize);
 		ui_list_begin(&fc.list_dir, fc.count, 0, 0);
 		for (i = 0; i < fc.count; ++i)
 		{
@@ -406,6 +428,8 @@ void ui_init_save_file(const char *path, int (*filter)(const char *fn))
 		load_dir(".");
 		ui_input_init(&fc.input_file, dir);
 	}
+	fz_snprintf(fc.original_file_name, PATH_MAX, "%s/%s", fc.curdir, fc.input_file.text);
+	fc.confirm = 0;
 }
 
 static void bump_file_version(int dir)
@@ -431,28 +455,56 @@ static void bump_file_version(int dir)
 	}
 }
 
-int ui_save_file(char filename[PATH_MAX], void (*extra_panel)(void), const char *label)
+static int ui_save_file_confirm(char *filename)
+{
+	int rv = 0;
+	ui_dialog_begin(ui.gridsize*20, (ui.gridsize+7)*3);
+	ui_layout(T, NONE, NW, ui.padsize, ui.padsize);
+	ui_label("%C File %s already exists!", 0x26a0, filename); /* WARNING SIGN */
+	ui_label("Do you want to replace it?");
+	ui_layout(B, X, S, ui.padsize, ui.padsize);
+	ui_panel_begin(0, ui.gridsize, 0, 0, 0);
+	{
+		ui_layout(R, NONE, S, 0, 0);
+		if (ui_button("Replace"))
+			rv = 1;
+		ui_spacer();
+		ui_layout(L, NONE, S, 0, 0);
+		if (ui_button("Cancel") || ui.key == KEY_ESCAPE)
+			fc.confirm = 0;
+	}
+	ui_panel_end();
+	ui_dialog_end();
+	return rv;
+}
+
+int ui_save_file(char *filename, void (*extra_panel)(void), const char *label)
 {
 	int i, rv = 0;
 
-	ui_panel_begin(0, 0, 4, 4, 1);
+	if (fc.confirm)
+	{
+		return ui_save_file_confirm(filename);
+	}
+
+	ui_panel_begin(0, 0, ui.padsize*2, ui.padsize*2, 1);
 	{
 		if (label)
 		{
-			ui_layout(T, X, NW, 4, 2);
+			ui_layout(T, X, NW, ui.padsize*2, ui.padsize);
 			ui_label(label);
 		}
 		ui_layout(L, Y, NW, 0, 0);
-		ui_panel_begin(150, 0, 0, 0, 0);
+		ui_panel_begin(ui.gridsize*6, 0, 0, 0, 0);
 		{
-			ui_layout(T, X, NW, 2, 2);
+			ui_layout(T, X, NW, ui.padsize, ui.padsize);
 			list_drives();
 			if (extra_panel)
 			{
 				ui_spacer();
 				extra_panel();
 			}
-			ui_layout(B, X, NW, 2, 2);
+			ui_layout(B, X, NW, ui.padsize, ui.padsize);
 			if (ui_button("Cancel") || (!ui.focus && ui.key == KEY_ESCAPE))
 			{
 				filename[0] = 0;
@@ -461,11 +513,11 @@ int ui_save_file(char filename[PATH_MAX], void (*extra_panel)(void), const char 
 		}
 		ui_panel_end();
 
-		ui_layout(T, X, NW, 2, 2);
+		ui_layout(T, X, NW, ui.padsize, ui.padsize);
 		if (ui_input(&fc.input_dir, 0, 1) == UI_INPUT_ACCEPT)
 			load_dir(fc.input_dir.text);
 
-		ui_layout(T, X, NW, 2, 2);
+		ui_layout(T, X, NW, ui.padsize, ui.padsize);
 		ui_panel_begin(0, ui.gridsize, 0, 0, 0);
 		{
 			ui_layout(R, NONE, CENTER, 0, 0);
@@ -473,6 +525,16 @@ int ui_save_file(char filename[PATH_MAX], void (*extra_panel)(void), const char 
 			{
 				fz_snprintf(filename, PATH_MAX, "%s/%s", fc.curdir, fc.input_file.text);
 				rv = 1;
+
+				/* Show confirmation dialog if we would overwrite another file. */
+				if (strcmp(filename, fc.original_file_name))
+				{
+					if (fz_file_exists(ctx, filename))
+					{
+						fc.confirm = 1;
+						rv = 0;
+					}
+				}
 			}
 			ui_spacer();
 			if (ui_button("\xe2\x9e\x95")) /* U+2795 HEAVY PLUS */
@@ -485,7 +547,7 @@ int ui_save_file(char filename[PATH_MAX], void (*extra_panel)(void), const char 
 		}
 		ui_panel_end();
 
-		ui_layout(ALL, BOTH, NW, 2, 2);
+		ui_layout(ALL, BOTH, NW, ui.padsize, ui.padsize);
 		ui_list_begin(&fc.list_dir, fc.count, 0, 0);
 		for (i = 0; i < fc.count; ++i)
 		{

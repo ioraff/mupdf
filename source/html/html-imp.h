@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #ifndef SOURCE_HTML_IMP_H
 #define SOURCE_HTML_IMP_H
 
@@ -385,7 +407,7 @@ void fz_draw_html(fz_context *ctx, fz_device *dev, fz_matrix ctm, fz_html *html,
 fz_outline *fz_load_html_outline(fz_context *ctx, fz_html *node);
 
 float fz_find_html_target(fz_context *ctx, fz_html *html, const char *id);
-fz_link *fz_load_html_links(fz_context *ctx, fz_html *html, int page, const char *base_uri, void *doc);
+fz_link *fz_load_html_links(fz_context *ctx, fz_html *html, int page, const char *base_uri);
 fz_html *fz_keep_html(fz_context *ctx, fz_html *html);
 void fz_drop_html(fz_context *ctx, fz_html *html);
 fz_bookmark fz_make_html_bookmark(fz_context *ctx, fz_html *html, int page);

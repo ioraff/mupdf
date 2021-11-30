@@ -1,11 +1,35 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include "color-imp.h"
+#include "pixmap-imp.h"
 
 #include <assert.h>
 #include <limits.h>
 #include <string.h>
 #include <math.h>
+#include <float.h>
 
 fz_pixmap *
 fz_keep_pixmap(fz_context *ctx, fz_pixmap *pix)
@@ -115,7 +139,7 @@ fz_pixmap *
 fz_new_pixmap_with_bbox(fz_context *ctx, fz_colorspace *colorspace, fz_irect bbox, fz_separations *seps, int alpha)
 {
 	fz_pixmap *pixmap;
-	pixmap = fz_new_pixmap(ctx, colorspace, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0, seps, alpha);
+	pixmap = fz_new_pixmap(ctx, colorspace, fz_irect_width(bbox), fz_irect_height(bbox), seps, alpha);
 	pixmap->x = bbox.x0;
 	pixmap->y = bbox.y0;
 	return pixmap;
@@ -124,13 +148,13 @@ fz_new_pixmap_with_bbox(fz_context *ctx, fz_colorspace *colorspace, fz_irect bbo
 fz_pixmap *
 fz_new_pixmap_with_bbox_and_data(fz_context *ctx, fz_colorspace *colorspace, fz_irect bbox, fz_separations *seps, int alpha, unsigned char *samples)
 {
-	int w = bbox.x1 - bbox.x0;
+	int w = fz_irect_width(bbox);
 	int stride;
 	int s = fz_count_active_separations(ctx, seps);
 	fz_pixmap *pixmap;
 	if (!colorspace && s == 0) alpha = 1;
 	stride = (fz_colorspace_n(ctx, colorspace) + s + alpha) * w;
-	pixmap = fz_new_pixmap_with_data(ctx, colorspace, w, bbox.y1 - bbox.y0, seps, alpha, stride, samples);
+	pixmap = fz_new_pixmap_with_data(ctx, colorspace, w, fz_irect_height(bbox), seps, alpha, stride, samples);
 	pixmap->x = bbox.x0;
 	pixmap->y = bbox.y0;
 	return pixmap;
@@ -160,8 +184,8 @@ fz_pixmap *fz_new_pixmap_from_pixmap(fz_context *ctx, fz_pixmap *pixmap, const f
 	subpix->storable.refs = 1;
 	subpix->x = rect->x0;
 	subpix->y = rect->y0;
-	subpix->w = rect->x1 - rect->x0;
-	subpix->h = rect->y1 - rect->y0;
+	subpix->w = fz_irect_width(*rect);
+	subpix->h = fz_irect_height(*rect);
 	subpix->samples += (rect->x0 - pixmap->x) + (rect->y0 - pixmap->y) * pixmap->stride;
 	subpix->underlying = fz_keep_pixmap(ctx, pixmap);
 	subpix->colorspace = fz_keep_colorspace(ctx, pixmap->colorspace);
@@ -496,7 +520,7 @@ clear_cmyk_bitmap(unsigned char *samples, int w, int h, int spots, int stride, i
 void
 fz_clear_pixmap(fz_context *ctx, fz_pixmap *pix)
 {
-	int stride = pix->w * pix->n;
+	ptrdiff_t stride = pix->w * (ptrdiff_t)pix->n;
 	int h = pix->h;
 	unsigned char *s = pix->samples;
 	if (stride == pix->stride)
@@ -508,7 +532,7 @@ fz_clear_pixmap(fz_context *ctx, fz_pixmap *pix)
 	{
 		while (h--)
 		{
-			memset(s, 0, (unsigned int)stride);
+			memset(s, 0, stride);
 			s += pix->stride;
 		}
 	}
@@ -516,19 +540,19 @@ fz_clear_pixmap(fz_context *ctx, fz_pixmap *pix)
 	{
 		while (h--)
 		{
-			memset(s, 0xff, (unsigned int)stride);
+			memset(s, 0xff, stride);
 			s += pix->stride;
 		}
 	}
 	else
 	{
 		/* Horrible, slow case: additive with spots */
-		int w = stride/pix->n;
+		size_t w = stride/pix->n;
 		int spots = pix->s;
 		int colorants = pix->n - spots; /* We know there is no alpha */
 		while (h--)
 		{
-			int w2 = w;
+			size_t w2 = w;
 			while (w2--)
 			{
 				int i = colorants;
@@ -555,7 +579,8 @@ void
 fz_clear_pixmap_with_value(fz_context *ctx, fz_pixmap *pix, int value)
 {
 	unsigned char *s;
-	int w, h, n, stride, len;
+	int w, h, n;
+	ptrdiff_t stride, len;
 	int alpha = pix->alpha;
 
 	w = pix->w;
@@ -572,7 +597,7 @@ fz_clear_pixmap_with_value(fz_context *ctx, fz_pixmap *pix, int value)
 
 	n = pix->n;
 	stride = pix->stride;
-	len = w * n;
+	len = (ptrdiff_t)w * n;
 
 	s = pix->samples;
 	if (value == 255 || !alpha)
@@ -584,7 +609,7 @@ fz_clear_pixmap_with_value(fz_context *ctx, fz_pixmap *pix, int value)
 		}
 		while (h--)
 		{
-			memset(s, value, (unsigned int)len);
+			memset(s, value, len);
 			s += stride;
 		}
 	}
@@ -642,19 +667,20 @@ fz_copy_pixmap_rect(fz_context *ctx, fz_pixmap *dest, fz_pixmap *src, fz_irect b
 {
 	unsigned char *srcp;
 	unsigned char *destp;
-	int y, w, destspan, srcspan;
+	unsigned int y, w;
+	size_t destspan, srcspan;
 
 	b = fz_intersect_irect(b, fz_pixmap_bbox(ctx, dest));
 	b = fz_intersect_irect(b, fz_pixmap_bbox(ctx, src));
-	w = b.x1 - b.x0;
-	y = b.y1 - b.y0;
-	if (w <= 0 || y <= 0)
+	if (fz_is_empty_irect(b))
 		return;
+	w = (unsigned int)(b.x1 - b.x0);
+	y = (unsigned int)(b.y1 - b.y0);
 
 	srcspan = src->stride;
-	srcp = src->samples + (unsigned int)(srcspan * (b.y0 - src->y) + src->n * (b.x0 - src->x));
+	srcp = src->samples + srcspan * (b.y0 - src->y) + (b.x0 - src->x) * (size_t)src->n;
 	destspan = dest->stride;
-	destp = dest->samples + (unsigned int)(destspan * (b.y0 - dest->y) + dest->n * (b.x0 - dest->x));
+	destp = dest->samples + destspan * (b.y0 - dest->y) + (b.x0 - dest->x) * (size_t)dest->n;
 
 	if (src->n == dest->n)
 	{
@@ -675,7 +701,7 @@ fz_copy_pixmap_rect(fz_context *ctx, fz_pixmap *dest, fz_pixmap *src, fz_irect b
 		fake_src.w = w;
 		fake_src.h = y;
 		fake_src.samples = srcp;
-		fz_convert_pixmap_samples(ctx, dest, &fake_src, NULL, default_cs, fz_default_color_params, 0);
+		fz_convert_pixmap_samples(ctx, &fake_src, dest, NULL, default_cs, fz_default_color_params, 0);
 	}
 }
 
@@ -683,7 +709,8 @@ void
 fz_clear_pixmap_rect_with_value(fz_context *ctx, fz_pixmap *dest, int value, fz_irect b)
 {
 	unsigned char *destp;
-	int x, y, w, k, destspan;
+	int x, y, w, k;
+	size_t destspan;
 
 	b = fz_intersect_irect(b, fz_pixmap_bbox(ctx, dest));
 	w = b.x1 - b.x0;
@@ -692,7 +719,7 @@ fz_clear_pixmap_rect_with_value(fz_context *ctx, fz_pixmap *dest, int value, fz_
 		return;
 
 	destspan = dest->stride;
-	destp = dest->samples + (unsigned int)(destspan * (b.y0 - dest->y) + dest->n * (b.x0 - dest->x));
+	destp = dest->samples + destspan * (b.y0 - dest->y) + (b.x0 - dest->x) * (size_t)dest->n;
 
 	/* CMYK needs special handling (and potentially any other subtractive colorspaces) */
 	if (fz_colorspace_n(ctx, dest->colorspace) == 4)
@@ -719,7 +746,7 @@ fz_clear_pixmap_rect_with_value(fz_context *ctx, fz_pixmap *dest, int value, fz_
 	{
 		do
 		{
-			memset(destp, 255, (unsigned int)(w * dest->n));
+			memset(destp, 255, w * (size_t)dest->n);
 			destp += destspan;
 		}
 		while (--y);
@@ -747,7 +774,7 @@ fz_premultiply_pixmap(fz_context *ctx, fz_pixmap *pix)
 	unsigned char *s = pix->samples;
 	unsigned char a;
 	int k, x, y;
-	int stride = pix->stride - pix->w * pix->n;
+	size_t stride = pix->stride - pix->w * (size_t)pix->n;
 
 	if (!pix->alpha)
 		return;
@@ -937,6 +964,29 @@ fz_invert_pixmap(fz_context *ctx, fz_pixmap *pix)
 	}
 }
 
+void
+fz_invert_pixmap_alpha(fz_context *ctx, fz_pixmap *pix)
+{
+	unsigned char *s = pix->samples;
+	int x, y;
+	int n1 = pix->n - pix->alpha;
+	int n = pix->n;
+
+	if (!pix->alpha)
+		return;
+
+	for (y = 0; y < pix->h; y++)
+	{
+		s += n1;
+		for (x = 0; x < pix->w; x++)
+		{
+			*s = 255 - *s;
+			s += n;
+		}
+		s += pix->stride - pix->w * n;
+	}
+}
+
 void fz_invert_pixmap_rect(fz_context *ctx, fz_pixmap *image, fz_irect rect)
 {
 	unsigned char *p;
@@ -949,7 +999,7 @@ void fz_invert_pixmap_rect(fz_context *ctx, fz_pixmap *image, fz_irect rect)
 
 	for (y = y0; y < y1; y++)
 	{
-		p = image->samples + (unsigned int)((y * image->stride) + (x0 * image->n));
+		p = image->samples + ((y * (size_t)image->stride) + (x0 * (size_t)image->n));
 		for (x = x0; x < x1; x++)
 		{
 			for (n = image->n; n > 1; n--, p++)
@@ -1068,6 +1118,216 @@ fz_new_pixmap_from_1bpp_data(fz_context *ctx, int x, int y, int w, int h, unsign
 	return pixmap;
 }
 
+static float
+calc_percentile(int *hist, float thr, float scale, float minval, float maxval)
+{
+	float prct;
+	int k = 0, count = 0;
+
+	while (count < thr)
+		count += hist[k++];
+
+	if (k <= 0)
+		prct = k;
+	else
+	{
+		float c0 = count - thr;
+		float c1 = thr - (count - hist[k - 1]);
+		prct = (c1 * k + c0 * (k - 1)) / (c0 + c1);
+	}
+
+	prct /= scale;
+	prct += minval;
+	return fz_clamp(prct, minval, maxval);
+}
+
+static void
+calc_percentiles(fz_context *ctx, int nsamples, float *samples, float *minprct, float *maxprct)
+{
+	float minval, maxval, scale;
+	int *hist, size, k;
+
+	minval = maxval = samples[0];
+	for (k = 1; k < nsamples; k++)
+	{
+		minval = fz_min(minval, samples[k]);
+		maxval = fz_max(maxval, samples[k]);
+	}
+
+	if (minval - maxval == 0)
+	{
+		*minprct = *maxprct = minval;
+		return;
+	}
+
+	size = fz_mini(65535, nsamples);
+	scale = (size - 1) / (maxval - minval);
+
+	hist = fz_calloc(ctx, size, sizeof(int));
+
+	fz_try(ctx)
+	{
+		for (k = 0; k < nsamples; k++)
+			hist[(uint16_t) (scale * (samples[k] - minval))]++;
+
+		*minprct = calc_percentile(hist, 0.01f * nsamples, scale, minval, maxval);
+		*maxprct = calc_percentile(hist, 0.99f * nsamples, scale, minval, maxval);
+	}
+	fz_always(ctx)
+		fz_free(ctx, hist);
+	fz_catch(ctx)
+		fz_rethrow(ctx);
+}
+
+/* Tone mapping according to "Consistent Tone Reproduction" by Min H. Kim and Jan Kautz. */
+fz_pixmap *
+fz_new_pixmap_from_float_data(fz_context *ctx, fz_colorspace *cs, int w, int h, float *samples)
+{
+	fz_pixmap *pixmap = NULL;
+	unsigned char *dp;
+	float *sample;
+	float *lsamples = NULL;
+	float minsample, maxsample, mu;
+	float k1, d0, sigma, sigmasq2;
+	float minprct, maxprct, range;
+	int y, k, n = fz_colorspace_n(ctx, cs);
+	int nsamples = w * h * n;
+#define KIMKAUTZC1 (3.0f)
+#define KIMKAUTZC2 (0.5f)
+#define MAXLD (logf(300.0f))
+#define MINLD (logf(0.3f))
+
+	fz_var(pixmap);
+	fz_var(lsamples);
+
+	fz_try(ctx)
+	{
+		lsamples = fz_malloc(ctx, nsamples * sizeof(float));
+
+		mu = 0;
+		minsample = FLT_MAX;
+		maxsample = -FLT_MAX;
+
+		for (k = 0; k < nsamples; k++)
+		{
+			lsamples[k] = logf(samples[k] == 0 ? FLT_MIN : samples[k]);
+			mu += lsamples[k];
+			minsample = fz_min(minsample, lsamples[k]);
+			maxsample = fz_max(maxsample, lsamples[k]);
+		}
+
+		mu /= nsamples;
+		d0 = maxsample - minsample;
+		k1 = (MAXLD - MINLD) / d0;
+		sigma = d0 / KIMKAUTZC1;
+		sigmasq2 = sigma * sigma * 2;
+
+		for (k = 0; k < nsamples; k++)
+		{
+			float samplemu = samples[k] - mu;
+			float samplemu2 = samplemu * samplemu;
+			float w = expf(-samplemu2 / sigmasq2);
+			float k2 = (1 - k1) * w + k1;
+			samples[k] = expf(KIMKAUTZC2 * k2 * (lsamples[k] - mu) + mu);
+		}
+
+		calc_percentiles(ctx, nsamples, samples, &minprct, &maxprct);
+		range = maxprct - minprct;
+
+		pixmap = fz_new_pixmap(ctx, cs, w, h, NULL, 0);
+
+		dp = pixmap->samples + pixmap->stride * (h - 1);
+		sample = samples;
+
+		for (y = 0; y < h; y++)
+		{
+			unsigned char *dpp = dp;
+
+			for (k = 0; k < w * n; k++)
+				*dpp++ = 255.0f * (fz_clamp(*sample++, minprct, maxprct) - minprct) / range;
+
+			dp -= pixmap->stride;
+		}
+	}
+	fz_always(ctx)
+		fz_free(ctx, lsamples);
+	fz_catch(ctx)
+	{
+		fz_drop_pixmap(ctx, pixmap);
+		fz_rethrow(ctx);
+	}
+
+	return pixmap;
+}
+
+fz_pixmap *
+fz_new_pixmap_from_alpha_channel(fz_context *ctx, fz_pixmap *src)
+{
+	fz_pixmap *dst;
+	int w, h, n, x;
+	unsigned char *sp, *dp;
+
+	if (!src->alpha)
+		return NULL;
+
+	dst = fz_new_pixmap_with_bbox(ctx, NULL, fz_pixmap_bbox(ctx, src), NULL, 1);
+	w = src->w;
+	h = src->h;
+	n = src->n;
+	sp = src->samples + n - 1;
+	dp = dst->samples;
+
+	while (h--)
+	{
+		unsigned char *s = sp;
+		unsigned char *d = dp;
+		for (x = 0; x < w; ++x)
+		{
+			*d++ = *s;
+			s += n;
+		}
+		sp += src->stride;
+		dp += dst->stride;
+	}
+
+	return dst;
+}
+
+fz_pixmap *
+fz_new_pixmap_from_color_and_mask(fz_context *ctx, fz_pixmap *color, fz_pixmap *mask)
+{
+	fz_pixmap *dst;
+	int w = color->w;
+	int h = color->h;
+	int n = color->n;
+	int x, y, k;
+
+	if (color->alpha)
+		fz_throw(ctx, FZ_ERROR_GENERIC, "color pixmap must not have an alpha channel");
+	if (mask->n != 1)
+		fz_throw(ctx, FZ_ERROR_GENERIC, "mask pixmap must have exactly one channel");
+	if (mask->w != color->w || mask->h != color->h)
+		fz_throw(ctx, FZ_ERROR_GENERIC, "color and mask pixmaps must be the same size");
+
+	dst = fz_new_pixmap_with_bbox(ctx, color->colorspace, fz_pixmap_bbox(ctx, color), NULL, 1);
+
+	for (y = 0; y < h; ++y)
+	{
+		unsigned char *cs = &color->samples[y * color->stride];
+		unsigned char *ms = &mask->samples[y * mask->stride];
+		unsigned char *ds = &dst->samples[y * dst->stride];
+		for (x = 0; x < w; ++x)
+		{
+			unsigned char a = *ms++;
+			for (k = 0; k < n; ++k)
+				*ds++ = fz_mul255(*cs++, a);
+			*ds++ = a;
+		}
+	}
+
+	return dst;
+}
+
 int
 fz_is_pixmap_monochrome(fz_context *ctx, fz_pixmap *pixmap)
 {
@@ -1120,7 +1380,7 @@ fz_subsample_pixmap_ARM(unsigned char *ptr, int w, int h, int f, int factor,
 	"ldr	r6, [r13,#4*12]		@ r6 = fwd			\n"
 	"ldr	r7, [r13,#4*13]		@ r7 = back			\n"
 	"subs	r2, r2, r3		@ r2 = h -= f			\n"
-	"blt	11f			@ Skip if less than a full row	\n"
+	"blt	12f			@ Skip if less than a full row	\n"
 	"1:				@ for (y = h; y > 0; y--) {	\n"
 	"ldr	r1, [r13]		@ r1 = w			\n"
 	"subs	r1, r1, r3		@ r1 = w -= f			\n"
@@ -1191,6 +1451,7 @@ fz_subsample_pixmap_ARM(unsigned char *ptr, int w, int h, int f, int factor,
 	"subs	r2, r2, r3		@ h -= f			\n"
 	"add	r0, r0, r14		@ s += fwd3			\n"
 	"bge	1b			@ }				\n"
+	"12:								\n"
 	"adds	r2, r2, r3		@ h += f			\n"
 	"beq	21f			@ if no stray row, end		\n"
 	"@ So doing one last (partial) row				\n"
@@ -1202,7 +1463,7 @@ fz_subsample_pixmap_ARM(unsigned char *ptr, int w, int h, int f, int factor,
 	"@ r4 = factor							\n"
 	"@ r5 = n							\n"
 	"@ r6 = fwd							\n"
-	"12:				@ for (y = h; y > 0; y--) {	\n"
+	"				@ for (y = h; y > 0; y--) {	\n"
 	"ldr	r1, [r13]		@ r1 = w			\n"
 	"ldr	r7, [r13,#4*21]		@ r7 = back5			\n"
 	"ldr	r8, [r13,#4*14]		@ r8 = back2			\n"
@@ -1279,29 +1540,41 @@ fz_subsample_pixmap_ARM(unsigned char *ptr, int w, int h, int f, int factor,
 void
 fz_subsample_pixmap(fz_context *ctx, fz_pixmap *tile, int factor)
 {
-	int dst_w, dst_h, w, h, fwd, fwd2, fwd3, back, back2, n, f;
-	unsigned char *s, *d;
-#ifndef ARCH_ARM
-	int x, y, xx, yy, nn;
-#endif
+	int f;
 
 	if (!tile)
 		return;
 
 	assert(tile->stride >= tile->w * tile->n);
 
-	s = d = tile->samples;
+	fz_subsample_pixblock(tile->samples, tile->w, tile->h, tile->n, factor, tile->stride);
+
 	f = 1<<factor;
-	w = tile->w;
-	h = tile->h;
-	n = tile->n;
-	dst_w = (w + f-1)>>factor;
-	dst_h = (h + f-1)>>factor;
-	fwd = tile->stride;
+	tile->w = (tile->w + f-1)>>factor;
+	tile->h = (tile->h + f-1)>>factor;
+	tile->stride = tile->w * (size_t)tile->n;
+	/* Redundant test? We only ever make pixmaps smaller! */
+	if (tile->h > INT_MAX / (tile->w * tile->n))
+		fz_throw(ctx, FZ_ERROR_MEMORY, "pixmap too large");
+	tile->samples = fz_realloc(ctx, tile->samples, (size_t)tile->h * tile->w * tile->n);
+}
+
+void
+fz_subsample_pixblock(unsigned char *s, int w, int h, int n, int factor, ptrdiff_t stride)
+{
+	int fwd, fwd2, fwd3, back, back2, f;
+	unsigned char *d;
+#ifndef ARCH_ARM
+	int x, y, xx, yy, nn;
+#endif
+
+	d = s;
+	f = 1<<factor;
+	fwd = stride;
 	back = f*fwd-n;
 	back2 = f*n-1;
 	fwd2 = (f-1)*n;
-	fwd3 = (f-1)*fwd + (int)tile->stride - w * n;
+	fwd3 = (f-1)*fwd + (int)stride - w * n;
 	factor *= 2;
 #ifdef ARCH_ARM
 	{
@@ -1414,12 +1687,6 @@ fz_subsample_pixmap(fz_context *ctx, fz_pixmap *tile, int factor)
 		}
 	}
 #endif
-	tile->w = dst_w;
-	tile->h = dst_h;
-	tile->stride = dst_w * n;
-	if (dst_h > INT_MAX / (dst_w * n))
-		fz_throw(ctx, FZ_ERROR_MEMORY, "pixmap too large");
-	tile->samples = fz_realloc(ctx, tile->samples, (size_t)dst_h * dst_w * n);
 }
 
 void
@@ -1504,8 +1771,8 @@ fz_convert_indexed_pixmap_to_base(fz_context *ctx, const fz_pixmap *src)
 	dst = fz_new_pixmap_with_bbox(ctx, base, fz_pixmap_bbox(ctx, src), src->seps, src->alpha);
 	s = src->samples;
 	d = dst->samples;
-	s_line_inc = src->stride - src->w * src->n;
-	d_line_inc = dst->stride - dst->w * dst->n;
+	s_line_inc = src->stride - src->w * (size_t)src->n;
+	d_line_inc = dst->stride - dst->w * (size_t)dst->n;
 
 	if (src->alpha)
 	{
@@ -1575,8 +1842,8 @@ fz_convert_separation_pixmap_to_base(fz_context *ctx, const fz_pixmap *src)
 	{
 		s = src->samples;
 		d = dst->samples;
-		s_line_inc = src->stride - src->w * src->n;
-		d_line_inc = dst->stride - dst->w * dst->n;
+		s_line_inc = src->stride - src->w * (size_t)src->n;
+		d_line_inc = dst->stride - dst->w * (size_t)dst->n;
 		sn = ss->n;
 		bn = base->n;
 

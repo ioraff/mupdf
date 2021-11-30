@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "gl-app.h"
 
 #include <string.h>
@@ -379,10 +401,38 @@ static void on_timer(int timer_id)
 	glutTimerFunc(500, on_timer, 0);
 }
 
+void ui_init_dpi(float override_scale)
+{
+	ui.scale = 1;
+
+	if (override_scale)
+	{
+		ui.scale = override_scale;
+	}
+	else
+	{
+		int wmm = glutGet(GLUT_SCREEN_WIDTH_MM);
+		int wpx = glutGet(GLUT_SCREEN_WIDTH);
+		int hmm = glutGet(GLUT_SCREEN_HEIGHT_MM);
+		int hpx = glutGet(GLUT_SCREEN_HEIGHT);
+		if (wmm > 0 && hmm > 0)
+		{
+			float ppi = ((wpx * 254) / wmm + (hpx * 254) / hmm) / 20;
+			if (ppi >= 288) ui.scale = 3;
+			else if (ppi >= 192) ui.scale = 2;
+			else if (ppi >= 144) ui.scale = 1.5f;
+		}
+	}
+
+	ui.fontsize = DEFAULT_UI_FONTSIZE * ui.scale;
+	ui.baseline = DEFAULT_UI_BASELINE * ui.scale;
+	ui.lineheight = DEFAULT_UI_LINEHEIGHT * ui.scale;
+	ui.gridsize = DEFAULT_UI_GRIDSIZE * ui.scale;
+	ui.padsize = 2 * ui.scale;
+}
+
 void ui_init(int w, int h, const char *title)
 {
-	float ui_scale;
-
 #ifdef FREEGLUT
 	glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE, GLUT_ACTION_GLUTMAINLOOP_RETURNS);
 #endif
@@ -415,26 +465,6 @@ void ui_init(int w, int h, const char *title)
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
 
-	ui_scale = 1;
-	{
-		int wmm = glutGet(GLUT_SCREEN_WIDTH_MM);
-		int wpx = glutGet(GLUT_SCREEN_WIDTH);
-		int hmm = glutGet(GLUT_SCREEN_HEIGHT_MM);
-		int hpx = glutGet(GLUT_SCREEN_HEIGHT);
-		if (wmm > 0 && hmm > 0)
-		{
-			float ppi = ((wpx * 254) / wmm + (hpx * 254) / hmm) / 20;
-			if (ppi >= 144) ui_scale = 1.5f;
-			if (ppi >= 192) ui_scale = 2.0f;
-			if (ppi >= 288) ui_scale = 3.0f;
-		}
-	}
-
-	ui.fontsize = DEFAULT_UI_FONTSIZE * ui_scale;
-	ui.baseline = DEFAULT_UI_BASELINE * ui_scale;
-	ui.lineheight = DEFAULT_UI_LINEHEIGHT * ui_scale;
-	ui.gridsize = DEFAULT_UI_GRIDSIZE * ui_scale;
-
 	ui_init_fonts();
 
 	ui.overlay_list = glGenLists(1);
@@ -442,6 +472,7 @@ void ui_init(int w, int h, const char *title)
 
 void ui_finish(void)
 {
+	pdf_drop_annot(ctx, ui.selected_annot);
 	glDeleteLists(ui.overlay_list, 1);
 	ui_finish_fonts();
 	glutExit();
@@ -688,8 +719,8 @@ void ui_panel_begin(int w, int h, int padx, int pady, int opaque)
 		glColorHex(UI_COLOR_PANEL);
 		glRectf(area.x0, area.y0, area.x1, area.y1);
 	}
-	area.x0 += padx; area.y0 += padx;
-	area.x1 -= pady; area.y1 -= pady;
+	area.x0 += padx; area.y0 += pady;
+	area.x1 -= padx; area.y1 -= pady;
 	ui_pack_push(area);
 }
 
@@ -994,6 +1025,16 @@ void ui_tree_begin(struct list *list, int count, int req_w, int req_h, int is_tr
 	if (ui.hot == list)
 		list->scroll_y -= ui.scroll_y * ui.lineheight * 3;
 
+	/* keyboard keys */
+	if (ui.hot == list && ui.key == KEY_HOME)
+		list->scroll_y = 0;
+	if (ui.hot == list && ui.key == KEY_END)
+		list->scroll_y = max_scroll_y;
+	if (ui.hot == list && ui.key == KEY_PAGE_UP)
+		list->scroll_y -= ((area.y1 - area.y0) / ui.lineheight) * ui.lineheight;
+	if (ui.hot == list && ui.key == KEY_PAGE_DOWN)
+		list->scroll_y += ((area.y1 - area.y0) / ui.lineheight) * ui.lineheight;
+
 	/* clamp scrolling to client area */
 	if (list->scroll_y >= max_scroll_y)
 		list->scroll_y = max_scroll_y;
@@ -1245,4 +1286,10 @@ int ui_select_aux(const void *id, const char *current, const char *options[], in
 		ui_popup_end();
 	}
 	return choice;
+}
+
+void ui_select_annot(pdf_annot *annot)
+{
+	pdf_drop_annot(ctx, ui.selected_annot);
+	ui.selected_annot = annot;
 }

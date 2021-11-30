@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * mudraw -- command line tool for drawing and converting documents
  */
@@ -383,7 +405,7 @@ static struct {
 	char *maxlayoutfilename;
 } timing;
 
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr,
 		"mudraw version " FZ_VERSION "\n"
@@ -394,11 +416,11 @@ static void usage(void)
 		"\t-F -\toutput format (default inferred from output file name)\n"
 		"\t\traster: png, pnm, pam, pbm, pkm, pwg, pcl, ps\n"
 		"\t\tvector: svg, pdf, trace, ocr.trace\n"
-		"\t\ttext: txt, html, xhtml, stext\n"
+		"\t\ttext: txt, html, xhtml, stext, stext.json\n"
 #ifndef OCR_DISABLED
-		"\t\tocr'd text: ocr.txt, ocr.html, ocr.xhtml, ocr.stext\n"
+		"\t\tocr'd text: ocr.txt, ocr.html, ocr.xhtml, ocr.stext, ocr.stext.json\n"
 #else
-		"\t\tocr'd text: ocr.txt, ocr.html, ocr.xhtml, ocr.stext (disabled)\n"
+		"\t\tocr'd text: ocr.txt, ocr.html, ocr.xhtml, ocr.stext, ocr.stext.json (disabled)\n"
 #endif
 		"\t\tbitmap-wrapped-as-pdf: pclm, ocr.pdf\n"
 		"\n"
@@ -467,7 +489,7 @@ static void usage(void)
 		"\n"
 		"\tpages\tcomma separated list of page numbers and ranges\n"
 		);
-	exit(1);
+	return 1;
 }
 
 static int gettime(void)
@@ -638,7 +660,7 @@ static void dodrawpage(fz_context *ctx, fz_page *page, fz_display_list *list, in
 			{
 				pre_ocr_dev = dev;
 				dev = NULL;
-				dev = fz_new_ocr_device(ctx, pre_ocr_dev, ctm, mediabox, 1, ocr_language);
+				dev = fz_new_ocr_device(ctx, pre_ocr_dev, ctm, mediabox, 1, ocr_language, NULL, NULL);
 			}
 			if (lowmemory)
 				fz_enable_device_hints(ctx, dev, FZ_NO_CACHE);
@@ -737,6 +759,7 @@ static void dodrawpage(fz_context *ctx, fz_page *page, fz_display_list *list, in
 						output_format == OUT_OCR_HTML ||
 						output_format == OUT_OCR_XHTML
 						) ? FZ_STEXT_PRESERVE_IMAGES : 0;
+			stext_options.flags |= FZ_STEXT_MEDIABOX_CLIP;
 			if (output_format == OUT_STEXT_JSON || output_format == OUT_OCR_STEXT_JSON)
 				stext_options.flags |= FZ_STEXT_PRESERVE_SPANS;
 			text = fz_new_stext_page(ctx, mediabox);
@@ -751,7 +774,7 @@ static void dodrawpage(fz_context *ctx, fz_page *page, fz_display_list *list, in
 			{
 				pre_ocr_dev = dev;
 				dev = NULL;
-				dev = fz_new_ocr_device(ctx, pre_ocr_dev, ctm, mediabox, 1, ocr_language);
+				dev = fz_new_ocr_device(ctx, pre_ocr_dev, ctm, mediabox, 1, ocr_language, NULL, NULL);
 			}
 			if (list)
 				fz_run_display_list(ctx, list, dev, ctm, fz_infinite_rect, cookie);
@@ -1816,7 +1839,7 @@ int mudraw_main(int argc, char **argv)
 	{
 		switch (c)
 		{
-		default: usage(); break;
+		default: return usage();
 
 		case 'q': quiet = 1; break;
 
@@ -1908,7 +1931,7 @@ int mudraw_main(int argc, char **argv)
 	}
 
 	if (fz_optind == argc)
-		usage();
+		return usage();
 
 	if (num_workers > 0)
 	{
@@ -2497,10 +2520,9 @@ int mudraw_main(int argc, char **argv)
 
 	if (trace_info.mem_limit || trace_info.alloc_limit || showmemory)
 	{
-		char buf[100];
-		fz_snprintf(buf, sizeof buf, "Memory use total=%zu peak=%zu current=%zu", trace_info.total, trace_info.peak, trace_info.current);
-		fz_snprintf(buf, sizeof buf, "Allocations total=%zu", trace_info.allocs);
-		fprintf(stderr, "%s\n", buf);
+		char buf[200];
+		fz_snprintf(buf, sizeof buf, "Memory use total=%zu peak=%zu current=%zu\nAllocations total=%zu\n", trace_info.total, trace_info.peak, trace_info.current, trace_info.allocs);
+		fprintf(stderr, "%s", buf);
 	}
 
 	return (errored != 0);

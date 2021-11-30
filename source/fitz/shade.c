@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 
 #include <string.h>
@@ -1050,10 +1072,10 @@ static fz_rect
 fz_bound_mesh_type4567(fz_context *ctx, fz_shade *shade)
 {
 	fz_rect bbox;
-	bbox.x0 = shade->u.m.x0;
-	bbox.y0 = shade->u.m.y0;
-	bbox.x1 = shade->u.m.x1;
-	bbox.y1 = shade->u.m.y1;
+	bbox.x0 = fz_min(shade->u.m.x0, shade->u.m.x1);
+	bbox.y0 = fz_min(shade->u.m.y0, shade->u.m.y1);
+	bbox.x1 = fz_max(shade->u.m.x0, shade->u.m.x1);
+	bbox.y1 = fz_max(shade->u.m.y0, shade->u.m.y1);
 	return bbox;
 }
 

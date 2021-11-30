@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /*
  * pdfshow -- the ultimate pdf debugging tool
  */
@@ -17,7 +39,7 @@ static int showdecode = 1;
 static int tight = 0;
 static int showcolumn;
 
-static void usage(void)
+static int usage(void)
 {
 	fprintf(stderr,
 		"usage: mutool show [options] file.pdf ( trailer | xref | pages | grep | outline | js | form | <path> ) *\n"
@@ -31,7 +53,7 @@ static void usage(void)
 		"\t\tpath elements separated by '.' or '/'. Path elements must be\n"
 		"\t\tarray index numbers, dictionary property names, or '*'.\n"
 	);
-	exit(1);
+	return 1;
 }
 
 static void showtrailer(void)
@@ -353,6 +375,7 @@ static void showfield(pdf_obj *field)
 		fz_write_string(ctx, out, "\n");
 	}
 	fz_write_printf(ctx, out, "    Name: %(\n", t);
+	fz_free(ctx, t);
 	if (*tu)
 		fz_write_printf(ctx, out, "    Label: %q\n", tu);
 	if (parent)
@@ -360,17 +383,17 @@ static void showfield(pdf_obj *field)
 
 	showaction(pdf_dict_getp(ctx, field, "A"), "Action");
 
-	showaction(pdf_dict_getp(ctx, field, "AA/K"), "Keystroke");
-	showaction(pdf_dict_getp(ctx, field, "AA/V"), "Validate");
-	showaction(pdf_dict_getp(ctx, field, "AA/F"), "Format");
-	showaction(pdf_dict_getp(ctx, field, "AA/C"), "Calculate");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/K"), "Keystroke");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/V"), "Validate");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/F"), "Format");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/C"), "Calculate");
 
-	showaction(pdf_dict_getp(ctx, field, "AA/E"), "Enter");
-	showaction(pdf_dict_getp(ctx, field, "AA/X"), "Exit");
-	showaction(pdf_dict_getp(ctx, field, "AA/D"), "Down");
-	showaction(pdf_dict_getp(ctx, field, "AA/U"), "Up");
-	showaction(pdf_dict_getp(ctx, field, "AA/Fo"), "Focus");
-	showaction(pdf_dict_getp(ctx, field, "AA/Bl"), "Blur");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/E"), "Enter");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/X"), "Exit");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/D"), "Down");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/U"), "Up");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/Fo"), "Focus");
+	showaction(pdf_dict_getp_inheritable(ctx, field, "AA/Bl"), "Blur");
 
 	fz_write_string(ctx, out, "\n");
 
@@ -395,6 +418,8 @@ static void showform(void)
 
 static int isnumber(char *s)
 {
+	if (*s == '-')
+		s++;
 	while (*s)
 	{
 		if (*s < '0' || *s > '9')
@@ -449,7 +474,11 @@ static void showpath(char *path, pdf_obj *obj)
 				}
 			}
 			else if (isnumber(part) && pdf_is_array(ctx, obj))
-				showpath(path, pdf_array_get(ctx, obj, atoi(part)-1));
+			{
+				int num = atoi(part);
+				num = num < 0 ? pdf_array_len(ctx, obj) + num : num - 1;
+				showpath(path, pdf_array_get(ctx, obj, num));
+			}
 			else
 				showpath(path, pdf_dict_gets(ctx, obj, part));
 		}
@@ -492,7 +521,11 @@ static void showpathpage(char *path)
 				}
 			}
 			else if (isnumber(part))
-				showpath(path, pdf_lookup_page_obj(ctx, doc, atoi(part)-1));
+			{
+				int num = atoi(part);
+				num = num < 0 ? pdf_count_pages(ctx, doc) + num : num - 1;
+				showpath(path, pdf_lookup_page_obj(ctx, doc, num));
+			}
 			else
 				fz_write_string(ctx, out, "null\n");
 		}
@@ -518,11 +551,14 @@ static void showpathroot(char *path)
 			showpathpage(list);
 		else if (isnumber(part))
 		{
-			pdf_obj *num = pdf_new_indirect(ctx, doc, atoi(part), 0);
+			pdf_obj *obj;
+			int num = atoi(part);
+			num = num < 0 ? pdf_xref_len(ctx, doc) + num : num;
+			obj = pdf_new_indirect(ctx, doc, num, 0);
 			fz_try(ctx)
-				showpath(list, num);
+				showpath(list, obj);
 			fz_always(ctx)
-				pdf_drop_obj(ctx, num);
+				pdf_drop_obj(ctx, obj);
 			fz_catch(ctx)
 				;
 		}
@@ -577,12 +613,12 @@ int pdfshow_main(int argc, char **argv)
 		case 'b': showbinary = 1; break;
 		case 'e': showdecode = 0; break;
 		case 'g': tight = 1; break;
-		default: usage(); break;
+		default: return usage();
 		}
 	}
 
 	if (fz_optind == argc)
-		usage();
+		return usage();
 
 	filename = argv[fz_optind++];
 

@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 #include "mupdf/fitz.h"
 #include "xps-imp.h"
 
@@ -171,13 +193,13 @@ xps_open_document(fz_context *ctx, const char *filename)
 	char *p;
 	fz_document *doc = NULL;
 
-	if (strstr(filename, "/_rels/.rels") || strstr(filename, "\\_rels\\.rels"))
+	p = strstr(filename, "/_rels/.rels");
+	if (p == NULL)
+		p = strstr(filename, "\\_rels\\.rels");
+	if (p)
 	{
 		char *buf = fz_strdup(ctx, filename);
-		p = strstr(buf, "/_rels/.rels");
-		if (!p)
-			p = strstr(buf, "\\_rels\\.rels");
-		*p = 0;
+		buf[p-filename] = 0;
 		fz_try(ctx)
 			doc = xps_open_document_with_directory(ctx, buf);
 		fz_always(ctx)
@@ -227,7 +249,7 @@ static int
 xps_lookup_metadata(fz_context *ctx, fz_document *doc_, const char *key, char *buf, int size)
 {
 	if (!strcmp(key, FZ_META_FORMAT))
-		return (int)fz_strlcpy(buf, "XPS", size);
+		return 1 + (int)fz_strlcpy(buf, "XPS", size);
 	return -1;
 }
 

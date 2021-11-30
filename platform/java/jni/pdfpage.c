@@ -1,3 +1,25 @@
+// Copyright (C) 2004-2021 Artifex Software, Inc.
+//
+// This file is part of MuPDF.
+//
+// MuPDF is free software: you can redistribute it and/or modify it under the
+// terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version.
+//
+// MuPDF is distributed in the hope that it will be useful, but WITHOUT ANY
+// WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+// FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+// details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with MuPDF. If not, see <https://www.gnu.org/licenses/agpl-3.0.en.html>
+//
+// Alternative licensing terms are available from the licensor.
+// For commercial licensing, see <https://www.artifex.com/> or contact
+// Artifex Software, Inc., 1305 Grant Avenue - Suite 200, Novato,
+// CA 94945, U.S.A., +1(415)492-9861, for further information.
+
 /* PDFPage interface */
 
 JNIEXPORT jobject JNICALL
@@ -121,12 +143,12 @@ FUN(PDFPage_getAnnotations)(JNIEnv *env, jobject self)
 }
 
 JNIEXPORT jobjectArray JNICALL
-FUN(PDFPage_getWidgetsNative)(JNIEnv *env, jobject self)
+FUN(PDFPage_getWidgets)(JNIEnv *env, jobject self)
 {
 	fz_context *ctx = get_context(env);
 	pdf_page *page = from_PDFPage(env, self);
-	pdf_widget *widget = NULL;
-	pdf_widget *widgets = NULL;
+	pdf_annot *widget = NULL;
+	pdf_annot *widgets = NULL;
 	jobjectArray jwidgets = NULL;
 	int count;
 	int i;
@@ -176,4 +198,28 @@ FUN(PDFPage_getWidgetsNative)(JNIEnv *env, jobject self)
 	}
 
 	return jwidgets;
+}
+
+JNIEXPORT jobject JNICALL
+FUN(PDFPage_createSignature)(JNIEnv *env, jobject self)
+{
+	fz_context *ctx = get_context(env);
+	pdf_page *page = from_PDFPage(env, self);
+	pdf_annot *widget = NULL;
+	char name[80];
+
+	if (!ctx || !page)
+		return NULL;
+
+	fz_try(ctx)
+	{
+		pdf_create_field_name(ctx, page->doc, "Signature", name, sizeof name);
+		widget = pdf_create_signature_widget(ctx, page, name);
+	}
+	fz_catch(ctx)
+	{
+		jni_rethrow(env, ctx);
+	}
+
+	return to_PDFWidget_safe_own(ctx, env, widget);
 }
